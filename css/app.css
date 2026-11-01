@@ -26,13 +26,31 @@ svg { display: block; }
 #stage { min-height: 100vh; min-height: var(--app-h, 100dvh); display: flex; justify-content: center; }
 #app { width: 100%; max-width: 520px; height: 100vh; height: var(--app-h, 100dvh); position: relative; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); }
 #app::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 360px; pointer-events: none; z-index: 0; background: radial-gradient(120% 100% at 50% -25%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 70%); }
+/* phones: pin the app to the screen edges so it always fills the display (no gap under the
+   browser toolbar, in home-screen mode, or where dvh isn't supported) — the same setup as Pro Blitz */
 @media (max-width: 619px) {
-  html { overflow: hidden; }
-  body, #stage { position: fixed; inset: 0; height: max(100%, var(--app-h, 0px)); }
+  /* the document itself never scrolls or rubber-bands (iOS would drag the page canvas over the app);
+     all scrolling happens inside the app's own panels */
+  html { overflow: hidden; overscroll-behavior: none; }
+  /* the app runs from the top edge to the physical bottom of the screen, under the home indicator and any
+     floating browser toolbar, rather than stopping where iOS says the layout viewport ends (bottom: 0);
+     100lvh is the full height with toolbars retracted, --app-h the measured height (screen height when
+     launched from the home screen); the bottom bars already pad themselves by the safe area */
+  body, #stage { position: fixed; top: 0; left: 0; right: 0; bottom: auto; height: 100%; height: max(100%, 100lvh, var(--app-h, 0px)); }
   body { overflow: hidden; background: var(--bg); }
+  #stage { min-height: 0; }
   #app { height: 100%; max-width: none; }
+  /* home-screen app: iOS reports a viewport short of the screen by the status bar and clips fixed elements to it,
+     but still paints normal page content all the way down, so here the app sits in normal flow at the full
+     screen height (--app-h) instead of being pinned */
+  html.standalone, html.standalone body, html.standalone #stage { position: relative; height: var(--app-h, 100lvh); }
+  /* sheets and toasts follow the app down to the physical bottom too */
+  #sheet-root { bottom: auto; height: max(100%, 100lvh, var(--app-h, 0px)); }
 }
-@media (min-width: 620px) { #app { margin: 14px 0; height: calc(var(--app-h, 100dvh) - 28px); border-radius: 30px; box-shadow: 0 30px 80px rgba(0, 0, 0, .6), 0 0 0 1px var(--line); } }
+@media (min-width: 620px) {
+  #stage { align-items: center; padding: 24px; background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--accent) 14%, var(--stage)), var(--stage) 70%); }
+  #app { height: min(940px, calc(100vh - 48px)); height: min(940px, calc(var(--app-h, 100dvh) - 48px)); border-radius: 34px; border: 1px solid var(--line-strong); box-shadow: 0 40px 120px rgba(0, 0, 0, .5); }
+}
 #app.wide { max-width: 1100px; }
 
 /* ── layout ── */
