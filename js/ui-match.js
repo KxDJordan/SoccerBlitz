@@ -73,6 +73,7 @@
     const cv = document.getElementById('pitch');
     const r = new Render.Pitch(cv, m, { home: T(f.h), away: T(f.a), kits: [hk, ak], ko: f.wx ? f.wx.ko : 'day', camera: G.settings.cam || 'follow', onSound: n => Sfx.play(n === 'bighit' ? 'bighit' : n) });
     S.live.r = r;
+    fitInsets();
     Sfx.crowdStart();
     Sfx.play('whistle');
     S.live.last = performance.now();
@@ -113,12 +114,34 @@
       const e = evs[L0.shown];
       if (!notable.includes(e.type)) continue;
       if (e.type === 'save' && Math.random() < 0.5) continue;
-      L0.ticks.push({ e, at: performance.now() });
       if (e.type === 'goal') { const us = e.team === L0.side; U.vibrate(us ? [30, 40, 60] : 20); }
+      // add just this line: existing lines stay put (rebuilding them every refresh replayed their animation)
+      const tk = document.getElementById('ticker');
+      if (!tk) continue;
+      const el = document.createElement('div');
+      el.className = `tick ${e.type === 'goal' ? 'goal' : e.type === 'red' ? 'red' : e.type === 'fire' || e.type === 'hattrick' ? 'fire' : ''}`;
+      el.innerHTML = `<span class="m">${e.min}'</span>${icon(e.type)} ${esc(e.text)}`;
+      tk.appendChild(el);
+      L0.ticks.push({ el, at: performance.now() });
     }
-    L0.ticks = L0.ticks.filter(t => performance.now() - t.at < 5200).slice(-3);
-    const tk = document.getElementById('ticker');
-    if (tk) tk.innerHTML = L0.ticks.map(({ e }) => `<div class="tick ${e.type === 'goal' ? 'goal' : e.type === 'red' ? 'red' : e.type === 'fire' || e.type === 'hattrick' ? 'fire' : ''}"><span class="m">${e.min}'</span>${icon(e.type)} ${esc(e.text)}</div>`).join('');
+    // lines fade out after five seconds, and only the latest three stay on screen
+    const now = performance.now();
+    L0.ticks = L0.ticks.filter((t, i, all) => {
+      const keep = now - t.at < 5200 && i >= all.length - 3;
+      if (!keep && !t.gone) { t.gone = true; t.el.classList.add('out'); setTimeout(() => t.el.remove(), 320); }
+      return keep;
+    });
+  }
+  // the camera frames the pitch between the scoreboard and the controls
+  function fitInsets() {
+    const L0 = S.live;
+    if (!L0 || !L0.r) return;
+    const cv = document.getElementById('pitch'), sb = document.querySelector('.screen.match .sb'), dock = document.querySelector('.screen.match .dock');
+    if (!cv) return;
+    const c = cv.getBoundingClientRect();
+    const top = sb ? sb.getBoundingClientRect().bottom - c.top + 10 : 0;
+    const bottom = dock ? c.bottom - dock.getBoundingClientRect().top + 6 : 0;
+    L0.r.setInsets(top, bottom);
   }
   const icon = t => ({ goal: '⚽', red: '🟥', yellow: '🟨', injury: '🩹', sub: '🔁', fire: '🔥', hattrick: '🎩', post: '🥅', save: '🧤', penalty: '❗', miss: '💨', pen: '🎯' }[t] || '•');
 
@@ -142,7 +165,7 @@
         <button data-a="liveSkip">${I.skip}<span>Sim</span></button>
       </div><div id="overlay"></div></div>`;
   };
-  SCREENS.match.resize = () => { if (S.live && S.live.r) S.live.r.resize(); };
+  SCREENS.match.resize = () => { if (S.live && S.live.r) { S.live.r.resize(); fitInsets(); } };
   SCREENS.match.unmount = () => { cancelAnimationFrame(raf); Sfx.crowdStop(); };
 
   A.livePause = () => { const L0 = S.live; L0.paused = !L0.paused; const b = document.getElementById('btn-pause'); if (b) b.innerHTML = `${L0.paused ? I.play : I.pause}<span>${L0.paused ? 'Play' : 'Pause'}</span>`; };

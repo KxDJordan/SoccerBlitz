@@ -196,20 +196,26 @@ const Render = (() => {
     // ── transforms ──
     tx(p) {
       const { s, cam } = this;
-      return this.vertical ? { x: this.w / 2 + (p.y - cam.y) * s + this.shx, y: this.h / 2 - (p.x - cam.x) * s + this.shy } : { x: this.w / 2 + (p.x - cam.x) * s + this.shx, y: this.h / 2 + (p.y - cam.y) * s + this.shy };
+      const cy = this.cy();
+      return this.vertical ? { x: this.w / 2 + (p.y - cam.y) * s + this.shx, y: cy - (p.x - cam.x) * s + this.shy } : { x: this.w / 2 + (p.x - cam.x) * s + this.shx, y: cy + (p.y - cam.y) * s + this.shy };
     }
     sAng(a) { return this.vertical ? a - Math.PI / 2 : a; }
+    // HUD overlays (scoreboard on top, controls at the bottom) in CSS px: the camera frames the space between them
+    setInsets(top, bottom) { this.inset = { top: Math.max(0, top || 0), bottom: Math.max(0, bottom || 0) }; }
+    visH() { const i = this.inset || { top: 0, bottom: 0 }; return Math.max(60, this.h - i.top - i.bottom); }
+    cy() { const i = this.inset || { top: 0, bottom: 0 }; return i.top + this.visH() / 2; }
     world() {
       const { s, cam, dpr } = this, k = s * dpr;
-      if (this.vertical) this.ctx.setTransform(0, -k, k, 0, (this.w / 2 - cam.y * s + this.shx) * dpr, (this.h / 2 + cam.x * s + this.shy) * dpr);
-      else this.ctx.setTransform(k, 0, 0, k, (this.w / 2 - cam.x * s + this.shx) * dpr, (this.h / 2 - cam.y * s + this.shy) * dpr);
+      const cy = this.cy();
+      if (this.vertical) this.ctx.setTransform(0, -k, k, 0, (this.w / 2 - cam.y * s + this.shx) * dpr, (cy + cam.x * s + this.shy) * dpr);
+      else this.ctx.setTransform(k, 0, 0, k, (this.w / 2 - cam.x * s + this.shx) * dpr, (cy - cam.y * s + this.shy) * dpr);
     }
     screen() { this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); }
 
     updateCamera(ball, dt) {
       const c = this.cfg, along = c.L + 8, across = c.W + 8;
       const [ws, hs] = this.vertical ? [across, along] : [along, across];
-      const base = Math.min(this.w / ws, this.h / hs);
+      const base = Math.min(this.w / ws, this.visH() / hs);
       const follow = this.camera === 'follow';
       const zt = follow ? (this.five ? 1.45 : this.vertical ? 2.05 : 2.3) : 1;
       this.cam.zoom += (zt - this.cam.zoom) * Math.min(1, dt * 3);
@@ -220,8 +226,9 @@ const Render = (() => {
         tx = ball.x + U.clamp(b.vel.x * 0.35, -8, 8);
         ty = ball.y + U.clamp(b.vel.y * 0.35, -6, 6);
         // keep the camera inside the stadium
-        const halfX = (this.vertical ? this.h : this.w) / 2 / this.s, halfY = (this.vertical ? this.w : this.h) / 2 / this.s;
-        tx = U.clamp(tx, Math.min(c.L / 2, halfX - 6), Math.max(c.L / 2, c.L - halfX + 6));
+        // the visible window may run 7m past each goal line, so the net and the area behind it stay in shot
+        const halfX = (this.vertical ? this.visH() : this.w) / 2 / this.s, halfY = (this.vertical ? this.w : this.visH()) / 2 / this.s;
+        tx = U.clamp(tx, Math.min(c.L / 2, halfX - 7), Math.max(c.L / 2, c.L - halfX + 7));
         ty = U.clamp(ty, Math.min(c.W / 2, halfY - 6), Math.max(c.W / 2, c.W - halfY + 6));
       }
       const k = Math.min(1, dt * (follow ? 2.8 : 4));
