@@ -270,8 +270,15 @@
     const targets = G.scout.targets.map(P).filter(p => p && p.tid >= 0 && p.tid !== G.userTeamId);
     return `<div class="card"><h3>${I.scope.replace('<svg', '<svg style="width:16px;height:16px"')} Scouts<span class="grow"></span><button class="btn xs" data-a="clubTab" data-v="staff">Hire</button></h3>
       ${scouts.length ? scouts.map(c => { const job = G.scout.jobs.find(j => j.cid === c.id); return `<div class="row">${Art.coachFace(c, 40)}<div class="grow"><div class="nm">${esc(c.fn)} ${esc(c.ln)}</div><div class="meta">Rating ${c.rating}${job ? ` · ${esc(L.REGIONS.find(r => r.id === job.region).name)} (${job.focus})` : ' · available'}</div>${job ? `<div class="prog mt4"><i style="width:${(1 - job.days / job.total) * 100}%"></i></div>` : ''}</div>${job ? `<span class="tiny muted">${job.days}d</span>` : `<button class="btn xs primary" data-a="assignScout" data-v="${c.id}">Send</button>`}</div>`; }).join('') : '<div class="empty">No scouts. Hire one in Club → Staff.</div>'}</div>
+      ${youthPoolCard()}
       <div class="card"><h3>🌱 Youth prospects found</h3>${youth.length ? youth.map(p => UI.playerRow(p, { meta: `${p.age} · ${esc(p.nat)} · POT <b>${UI.potTxt(p)}</b>`, right: `<button class="btn xs primary" data-a="signYouth" data-v="${p.id}">Sign ${U.money(p.fee)}</button>` })).join('') : '<div class="empty small">Send a scout on a youth trip to find wonderkids.</div>'}</div>
       <div class="card"><h3>🎯 Recommended targets</h3>${targets.length ? targets.map(p => UI.playerRow(p, { right: `<div class="right">${UI.ovrB(p)}<div class="tiny muted">${U.money(L.value(p))}</div></div>` })).join('') : '<div class="empty small">Send a scout on a senior trip for recommendations.</div>'}</div>`;
+  }
+  function youthPoolCard() {
+    const pool = L.youthPool(), days = G.scout.pool ? G.scout.pool.days : L.POOL_DAYS;
+    return `<div class="card"><h3>🧒 Youth pool<span class="grow"></span><span class="tag t-acc">New batch in ${days} day${days === 1 ? '' : 's'}</span></h3>
+      <p class="tiny muted" style="margin-top:-4px">Your scouting network brings in a fresh group of 15–16-year-olds every ${L.POOL_DAYS} days. Sign the ones you like before the next batch arrives: the rest move on. Better scouts, academy facilities and a good youth coach mean bigger, better groups.</p>
+      ${pool.length ? pool.map(p => UI.playerRow(p, { meta: `${p.age} · ${esc(p.nat)} · POT <b>${UI.potTxt(p)}</b>`, right: `<button class="btn xs primary" data-a="signYouth" data-v="${p.id}">Sign ${U.money(p.fee)}</button>` })).join('') : '<div class="empty small">Everyone from this batch has been signed. More arrive soon.</div>'}</div>`;
   }
   A.assignScout = cid => {
     S.scoutPick = { cid: +cid, region: L.user().nation, focus: 'youth' };

@@ -1065,7 +1065,7 @@ const Engine = (() => {
       const myV = this.toV(t, p.pos.y);
       for (const m of mates) {
         // the keeper is an outlet from deep, not a target from midfield
-        if (m.isGK && (myU > 0.42 || throwIn || (pressure < 0.35 && myU > 0.2))) continue;
+        if (m.isGK && (myU > 0.42 || throwIn || pressure < 0.35)) continue;
         // a team-mate standing offside: the passer sees the flag coming (mostly)
         const offM = !freeKick && !throwIn && this.offsideSeen(m, p.pos.x, offLine, vision);
         const aims = [this.aimClamp(t, add(m.pos, scale(m.vel, 0.35)))];
@@ -1111,6 +1111,8 @@ const Engine = (() => {
             if (m.rIP.boxStay && this.inAttackingBox(t, aim)) rb *= 1.15;
             // straight back to whoever just gave it to you, unpressed and not forward: sterile ping-pong
             if (m.id === p.receivedFrom && this.time - p.receivedAt < 4 && pressure < 0.5 && aimU <= myU + 0.02) rb *= 0.6;
+            const pp = this.pingPong;
+            if (pp && pp.to === p.id && pp.from === m.id && pp.n >= 2) rb *= pressure > 0.7 ? 0.6 : pp.n >= 4 ? 0.04 : 0.15;
             // switch of play: a long diagonal into a wide man in space on the far side
             if (lofted && d > 25 * k && dv > 0.35) rb *= 1 + 0.12 + 0.2 * wideOut + 0.2 * space;
             // possession sides are patient but always probing: line-breaking short passes are what they live for
@@ -1273,6 +1275,9 @@ const Engine = (() => {
 
     pass(p, m, aim, lofted, cross) {
       const b = this.ball;
+      // count back-and-forth exchanges between the same two players
+      const pp = this.pingPong;
+      this.pingPong = pp && pp.to === p.id && pp.from === m.id ? { from: p.id, to: m.id, n: pp.n + 1 } : { from: p.id, to: m.id, n: 1 };
       this.markOffside(p);
       if (p.throwIn) return this.throwBall(p, m, aim, lofted);
       if (cross && lofted && this.crossBlocked(p, aim)) return;
@@ -2006,7 +2011,7 @@ const Engine = (() => {
     throwIn() {
       const b = this.ball, c = this.cfg;
       this.stats[1 - b.lastTeam].throwIns++;
-      this.setRestart('throwin', 1 - b.lastTeam, vec(clamp(b.pos.x, 1, c.L - 1), b.pos.y < 0 ? 0.3 : c.W - 0.3));
+      this.setRestart('throwin', 1 - b.lastTeam, vec(clamp(b.pos.x, 1, c.L - 1), b.pos.y < 0 ? 0.3 : c.W - 0.3), undefined, false);
     }
     byline() {
       const b = this.ball, c = this.cfg;
@@ -2018,14 +2023,14 @@ const Engine = (() => {
       if (b.lastTeam === defTeam) {
         this.stats[attTeam].corners++;
         const x = b.pos.x < 0 ? 0.5 : c.L - 0.5;
-        return this.setRestart('corner', attTeam, vec(x, b.pos.y < c.W / 2 ? 0.5 : c.W - 0.5));
+        return this.setRestart('corner', attTeam, vec(x, b.pos.y < c.W / 2 ? 0.5 : c.W - 0.5), undefined, false);
       }
       this.goalKick(defTeam, b.pos.y);
     }
-    goalKick(team, y) {
+    goalKick(team, y, out = true) {
       const c = this.cfg, x = team === 0 ? c.SIX_D : c.L - c.SIX_D;
       this.stats[team].goalKicks++;
-      this.setRestart('goalkick', team, vec(x, c.W / 2 + (y < c.W / 2 ? -c.SIX_W / 3 : c.SIX_W / 3)));
+      this.setRestart('goalkick', team, vec(x, c.W / 2 + (y < c.W / 2 ? -c.SIX_W / 3 : c.SIX_W / 3)), undefined, !out);
     }
 
     // ── challenges ──
@@ -2179,7 +2184,8 @@ const Engine = (() => {
           this.wall.ids = defs.map(p => p.id);
         }
       }
-      this.restart = { type, team, pos: { ...pos }, taker: this.chooseTaker(type, team, pos, direct), timer: timer + (direct ? 0.6 : 0), teleported: false, direct };
+      this.restart = { type, team, pos: { ...pos }, taker: this.chooseTaker(type, team, pos, direct), timer: timer + (direct ? 0.6 : 0), teleported: false, direct, flying: !placeBall && type !== 'kickoff', flyT: 0 };
+      if (!placeBall && type !== 'kickoff') { b.shot = null; b.owner = null; }
       for (const p of this.onPitch) { p.runTarget = null; p.supportTarget = null; p.action = 'position'; p.mustPass = false; }
     }
     chooseTaker(type, team, pos, direct) {
@@ -2222,6 +2228,27 @@ const Engine = (() => {
       }
       return t;
     }
+    // a ball that's gone out keeps flying past the line: over the boards' edge it bounces back and dies,
+    // then it's fetched back to the restart spot (the ball boy's job)
+    flyOut(r) {
+      const b = this.ball, c = this.cfg;
+      r.flyT += TICK;
+      b.pos = add(b.pos, scale(b.vel, TICK));
+      b.vel = scale(b.vel, Math.exp(-(b.z > 0.2 ? AIR_K : 1.6) * TICK));
+      const m = this.five ? 4.5 : 3.1, lo = { x: -m, y: -m }, hi = { x: c.L + m, y: c.W + m };
+      for (const k of ['x', 'y']) {
+        if (b.pos[k] < lo[k] || b.pos[k] > hi[k]) {
+          // the advertising boards (or the stand) stop it: a low ball thuds back, a high one drops behind them
+          if (b.z < 1.2) { b.pos[k] = clamp(b.pos[k], lo[k], hi[k]); b.vel[k] *= -0.3; b.vel = scale(b.vel, 0.6); }
+          else if (b.pos[k] < lo[k] - 6 || b.pos[k] > hi[k] + 6) { b.vel = vec(); b.pos[k] = clamp(b.pos[k], lo[k] - 6, hi[k] + 6); }
+        }
+      }
+      if (r.flyT > 2.2 || (r.flyT > 0.7 && len(b.vel) < 0.8 && b.z < 0.05)) {
+        r.flying = false;
+        b.pos = { ...r.pos }; b.prevPos = { ...r.pos }; b.vel = vec(); b.z = 0; b.vz = 0; b.spin = 0;
+        r.timer = Math.max(r.timer, 0.5);
+      }
+    }
     pushOut(t, from, radius) {
       const d = dist(t, from);
       if (d >= radius) return t;
@@ -2261,6 +2288,7 @@ const Engine = (() => {
           return;
         }
       }
+      if (r.flying) this.flyOut(r);
       let taker = r.taker != null ? this.players[r.taker] : null;
       if (!taker || !taker.active) { r.taker = this.chooseTaker(r.type, r.team, r.pos, r.direct); taker = r.taker != null ? this.players[r.taker] : null; }
       if (!taker) { this.phase = 'play'; this.restart = null; this.wall = null; this.ball.pos = { ...r.pos }; return; }
@@ -2271,7 +2299,7 @@ const Engine = (() => {
         else { p.target = this.restartTarget(p, r); p.urgency = 0.75; }
         this.move(p);
       }
-      if (r.timer > 0) return;
+      if (r.timer > 0 || r.flying) return;
       // the taker has to actually get to the ball: no teleporting onto it (a safety valve stops play stalling)
       r.wait = (r.wait || 0) + TICK;
       if (dist(taker.pos, behind) > 0.45 && r.wait < 6) return;

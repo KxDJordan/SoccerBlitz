@@ -184,6 +184,15 @@ const L = (() => {
     const age = p.age < 21 ? 0.7 : p.age > 31 ? 0.8 : 1;
     return Math.max(1, Math.round(base * age * (1 + Math.max(0, p.pot - p.ovr) / 80)));
   }
+  // where a player stands in his club's pecking order: in the XI, on the bench, or out of the picture (with this season's starts)
+  function squadRole(p) {
+    const t = p.tid >= 0 ? G.teams[p.tid] : null;
+    const starts = p.st ? p.st.gp || 0 : 0, apps = starts ? `, ${starts} game${starts === 1 ? '' : 's'} this season` : '';
+    if (!t || !t.tac) return { tag: 'Squad player', txt: 'a squad player' };
+    if ((t.tac.lineup || []).includes(p.id)) return { tag: 'Starter', txt: `a starter in your XI${apps}` };
+    if ((t.tac.bench || []).includes(p.id)) return { tag: 'Bench', txt: `on your bench${apps}` };
+    return { tag: 'Reserve', txt: `outside your matchday squad${apps}` };
+  }
   // transfer value ($M)
   function value(p) {
     const base = 0.15 * Math.exp((p.ovr - 50) / 7.5);
@@ -866,6 +875,8 @@ const L = (() => {
     for (const id of G.scout.youth || []) { const p = P(id); if (p && p.tid === -3) { delete G.players[id]; gone.add(id); } }
     G.scout.youth = [];
     if (G.shortlist) G.shortlist = G.shortlist.filter(id => !gone.has(id));
+    // a new season, a new crop: the pool turns over straight away
+    refreshYouthPool();
     // only the latest season needs the full final-standings snapshot
     for (const h of G.history) if (h !== G.lastSummary) delete h.final;
     for (const t of G.teams) if (!isUser(t.id)) aiTactics(t);
@@ -1458,7 +1469,8 @@ const L = (() => {
       const b = U.pick(buyers);
       const fee = +(value(p) * U.rand(p.listed ? 0.8 : 0.95, p.listed ? 1.1 : 1.35)).toFixed(2);
       if (G.inbox.some(m => !m.done && m.type === 'bid' && m.pid === p.id)) continue;
-      Career.inbox({ type: 'bid', pid: p.id, buyer: b.id, fee, title: `${b.name} bid ${U.money(fee)} for ${p.ln}`, body: `${p.fn} ${p.ln} (${p.pos}, ${p.ovr}) is valued around ${U.money(value(p))}.`, actions: [{ label: `Accept ${U.money(fee)}`, act: 'acceptBid' }, { label: 'Counter +25%', act: 'counterBid' }, { label: 'Reject', act: 'rejectBid', danger: true }], expires: G.day + 4 });
+      const role = squadRole(p);
+      Career.inbox({ type: 'bid', pid: p.id, buyer: b.id, fee, title: `${b.name} bid ${U.money(fee)} for ${p.ln} · ${role.tag}`, body: `${p.fn} ${p.ln} (${p.pos}, ${p.ovr}) is ${role.txt}. Valued around ${U.money(value(p))}.`, actions: [{ label: `Accept ${U.money(fee)}`, act: 'acceptBid' }, { label: 'Counter +25%', act: 'counterBid' }, { label: 'Reject', act: 'rejectBid', danger: true }], expires: G.day + 4 });
     }
   }
 
@@ -1481,6 +1493,9 @@ const L = (() => {
     const done = G.scout.jobs.filter(j => j.days <= 0);
     G.scout.jobs = G.scout.jobs.filter(j => j.days > 0);
     for (const j of done) finishScouting(j);
+    // the youth pool turns over on a fixed cadence
+    if (!G.scout.pool) refreshYouthPool(true);
+    else if (--G.scout.pool.days <= 0) refreshYouthPool();
     for (const id in G.scout.single || {}) { if (--G.scout.single[id] <= 0) { G.scout.known[id] = 3; delete G.scout.single[id]; const p = P(+id); if (p) Career.inbox({ type: 'scout', pid: p.id, title: `Report: ${p.fn} ${p.ln}`, body: `Full report in: ${p.ovr} overall, potential ${U.potGrade(p.pot)}.`, actions: [{ label: 'View', act: 'player', v: p.id }] }); } }
   }
   function finishScouting(j) {
@@ -1510,6 +1525,37 @@ const L = (() => {
     }
     save();
   }
+  // ── the youth pool: a fresh batch of 15–16-year-olds every POOL_DAYS, picked up by the club's scouting network ──
+  // (better scouts, academy and youth coach = more and better prospects; whoever isn't signed moves on at the next refresh)
+  const POOL_DAYS = 14;
+  function poolQuality() {
+    const best = Math.max(45, ...G.staff.sct.map(id => (G.coaches[id] ? G.coaches[id].rating : 0)));
+    const yc = G.staff.yth != null && G.coaches[G.staff.yth] ? G.coaches[G.staff.yth].rating : 50;
+    return { scout: best, size: 4 + (best >= 70 ? 1 : 0) + (user().acad.level >= 3 ? 1 : 0), bump: (best - 55) / 6 + (yc - 50) / 10 + user().acad.level * 1.5 + (user().ident === 'academy' ? 2 : 0) };
+  }
+  function refreshYouthPool(quiet = false) {
+    const u = user();
+    if (!u) return;
+    const old = (G.scout.pool && G.scout.pool.ids) || [];
+    const gone = new Set();
+    for (const id of old) { const p = P(id); if (p && p.tid === -3) { delete G.players[id]; gone.add(id); } }
+    if (G.shortlist && gone.size) G.shortlist = G.shortlist.filter(id => !gone.has(id));
+    const q = poolQuality(), ids = [];
+    for (let i = 0; i < q.size; i++) {
+      // mostly home-grown, the odd one from abroad
+      const abroad = rng() < 0.25, nid = abroad ? U.pick(DATA.NATIONS.filter(n => n.id !== u.nation)).id : u.nation;
+      const age = U.ri(15, 16);
+      const ovr = Math.round(U.clamp(37 + (age - 15) * 4 + U.gauss(0, 5) + q.bump * 0.4, 30, 62));
+      const pot = Math.round(U.clamp(ovr + 19 + U.gauss(6, 9) + q.bump, ovr + 10, 96));
+      const p = mkPlayer(U.pick(DATA.POS.filter(x => x !== 'GK').concat(rng() < 0.15 ? ['GK'] : [])), ovr, age, nid, { pot });
+      p.tid = -3; p.fee = +(0.04 + Math.max(0, pot - 60) * 0.011).toFixed(2); p.found = G.day; p.pool = true;
+      G.scout.known[p.id] = q.scout >= 70 ? 3 : 2;
+      ids.push(p.id);
+    }
+    G.scout.pool = { ids, days: POOL_DAYS, batch: ((G.scout.pool && G.scout.pool.batch) || 0) + 1 };
+    if (!quiet) Career.inbox({ type: 'scout', title: `🌱 Youth pool refreshed: ${ids.length} new prospects`, body: `Your scouting network has a new batch of ${ids.length} youngsters ready to join the academy. Whoever you don't sign moves on in ${POOL_DAYS} days.`, actions: [{ label: 'View the pool', act: 'tab', v: 'squad:scout' }], expires: G.day + POOL_DAYS });
+  }
+  const youthPool = () => ((G.scout.pool && G.scout.pool.ids) || []).map(P).filter(p => p && p.tid === -3);
   function scoutPlayer(pid) {
     G.scout.single = G.scout.single || {};
     const cost = 0.03 * (user().ident === 'moneyball' ? 0.5 : 1);
@@ -1526,6 +1572,7 @@ const L = (() => {
     p.tid = u.id; p.acad = true; p.wage = 0; p.yrs = 3; p.focus = TAC.defaultRole(p.pos);
     G.acad.push(p.id);
     G.scout.youth = G.scout.youth.filter(x => x !== pid);
+    p.pool = false;
     G.stats.scoutSigned = (G.stats.scoutSigned || 0) + 1;
     G.scout.known[pid] = 3;
     save();
@@ -1698,7 +1745,7 @@ const L = (() => {
     dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, resultFor, seasonRecord, lastUserFixture, attendance,
     table, acadTableRows, position, finalStanding, tableLg, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
     MIN_SQUAD, canLose, squadFloorWhy, askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,
-    REGIONS, scoutCost, startScouting, scoutPlayer, signYouth, knowledge, seenOvr,
+    squadRole, REGIONS, scoutCost, startScouting, scoutPlayer, signYouth, knowledge, seenOvr, youthPool, refreshYouthPool, POOL_DAYS,
     hireStaff, fireStaff, hireManager, takeJob, bestFree, upgradeCost, upgrade,
     save, flush, saveable, load, exportText, importText, wipe,
   };
