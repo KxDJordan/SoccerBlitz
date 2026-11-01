@@ -503,7 +503,7 @@ const L = (() => {
   const academy = () => (G.acad || []).map(P).filter(p => p && p.acad && p.tid === G.userTeamId);
   function promote(pid) {
     const p = P(pid), t = user();
-    if (!p || !p.acad) return false;
+    if (!p || !p.acad || p.age < 16) return false;
     G.acad = G.acad.filter(x => x !== pid);
     p.acad = false; p.wage = Math.max(1, Math.round(marketWage(p) * 0.6)); p.yrs = 3; p.num = 0;
     p.debutPending = true;

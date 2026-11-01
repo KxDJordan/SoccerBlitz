@@ -212,7 +212,7 @@
       <div class="card tight"><div class="flex">${yc ? Art.coachFace(yc, 40) : '<div class="av" style="background:var(--surface-3)">?</div>'}<div class="grow"><div class="bold small">${yc ? `${esc(yc.fn)} ${esc(yc.ln)}` : 'No youth coach'}</div><div class="tiny muted">Youth coach ${yc ? `· rating ${yc.rating}` : '— hire one in Club → Staff'}</div></div><button class="btn xs" data-a="clubTab" data-v="facilities">Upgrade</button></div></div>
       ${next ? `<div class="card tight"><div class="flex between"><span class="kicker">Next U18 game</span><span class="tiny muted">${L.dateStr(next.day, true)}</span></div><div class="flex mt8">${UI.crest(T(next.h), 26)}<b class="small grow">${esc(T(next.h).abbr)} v ${esc(T(next.a).abbr)}</b>${UI.crest(T(next.a), 26)}</div></div>` : ''}
       ${last ? `<div class="card tight"><div class="flex between"><span class="kicker">Last U18 result</span><button class="btn xs" data-a="replayAcad" data-v="${last.id}">${I.eye} Watch replay</button></div><div class="flex mt8">${UI.crest(T(last.h), 24)}<b class="grow small">${esc(T(last.h).abbr)} ${last.hs}-${last.as} ${esc(T(last.a).abbr)}</b>${UI.crest(T(last.a), 24)}</div></div>` : ''}
-      <p class="tiny muted">Set each prospect's training plan to steer his growth toward a role. Players can join the first team from age 17, and must be promoted or released at 19.</p>
+      <p class="tiny muted">Set each prospect's training plan to steer his growth toward a role. Players can join the first team from age 16, and must be promoted or released at 19.</p>
       <div class="card tight list">${kids.length ? kids.map(p => { const r = TAC.ROLES[p.focus]; return UI.playerRow(p, { act: 'kid', meta: `${p.age} yrs · POT <b>${U.potGrade(p.pot)}</b> · ${r ? `🎯 ${esc(r.name)}` : 'no plan'}`, right: `<span class="ovr ${U.ovrClass(p.ovr)}">${p.ovr}</span>` }); }).join('') : '<div class="empty">The academy is empty. Scout for youth prospects, or wait for the next intake.</div>'}</div>`;
   }
   A.kid = pid => kidSheet(+pid);
@@ -220,7 +220,7 @@
     const p = P(pid);
     if (!p) return;
     UI.sheet(`${pcard(p)}${hallmarksHTML(p)}${devPanel(p)}
-      <div class="grid2 mt12"><button class="btn primary ${p.age < 17 ? 'off' : ''}" data-a="promoteKid" data-v="${pid}">${p.age < 17 ? `Promote at 17` : 'Promote to first team'}</button><button class="btn danger" data-a="releaseKid" data-v="${pid}">Release</button></div>`, { vars: UI.teamVars(L.user()), refresh: () => kidSheet(pid) });
+      <div class="grid2 mt12"><button class="btn primary ${p.age < 16 ? 'off' : ''}" data-a="promoteKid" data-v="${pid}">${p.age < 16 ? `Promote at 16` : 'Promote to first team'}</button><button class="btn danger" data-a="releaseKid" data-v="${pid}">Release</button></div>`, { vars: UI.teamVars(L.user()), refresh: () => kidSheet(pid) });
   }
   // ── development plan: a position to grow into, a role inside it, and what that does to his growth ──
   function outlookCard(p) {
