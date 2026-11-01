@@ -327,7 +327,7 @@ const L = (() => {
     });
     if (tac.lineup.some(x => x == null)) autoLineup(t, true);
     const inXI = new Set(tac.lineup);
-    tac.bench = (tac.bench || []).filter(id => { const p = P(id); return p && p.tid === t.id && available(p) && !inXI.has(id); });
+    tac.bench = (tac.bench || []).filter((id, i, a) => { const p = P(id); return p && p.tid === t.id && available(p) && !inXI.has(id) && a.indexOf(id) === i; }).slice(0, 9);
     // empty bench seats are filled from the squad (new signings and promoted kids included)
     if (tac.bench.length < 9) {
       const extra = squad(t).filter(p => available(p) && !inXI.has(p.id) && !tac.bench.includes(p.id)).sort((a, b) => b.ovr - a.ovr);

@@ -221,6 +221,7 @@
       <div class="row"><div class="grow"><div class="nm">Sound</div><div class="meta">Synthesised crowd, hits and whistles</div></div><button class="btn sm ${Sfx.on ? 'primary' : ''}" data-a="toggleSfx">${Sfx.on ? 'On' : 'Off'}</button></div>
       ${has ? `<div class="row"><div class="grow"><div class="nm">Auto substitutions</div><div class="meta">Your assistant makes tired and injured changes in live matches</div></div><button class="btn sm ${G.settings.autoSub ? 'primary' : ''}" data-a="toggleAutoSub">${G.settings.autoSub ? 'On' : 'Off'}</button></div>
       <div class="row"><div class="grow"><div class="nm">Match camera</div><div class="meta">Follow the ball, or the whole pitch</div></div><button class="btn sm" data-a="toggleCam">${G.settings.cam === 'follow' ? 'Follow' : 'Full pitch'}</button></div>
+      <div class="row"><div class="grow"><div class="nm">Goal replays</div><div class="meta">A zoomed-in, slow-motion replay after every goal</div></div><button class="btn sm" data-a="toggleReplays">${G.settings.replays === false ? 'Off' : 'On'}</button></div>
       <div class="kicker mt12 mb8">Save</div><div class="small muted mb8">Saved on this device${info.db ? ' (IndexedDB)' : ''} · ${(info.size / 1024).toFixed(0)} KB</div>
       <div class="grid2"><button class="btn" data-a="exportSave">Export</button><button class="btn" data-a="importSave">Import</button></div>
       <button class="btn danger block mt8" data-a="deleteSave">Delete career</button>
@@ -232,6 +233,7 @@
   A.setPitch = v => { UI.setPref('pitch', v); UI.refreshSheet(); if (S.screen === 'menu') UI.render(); UI.toast('Pitch style set: new matches use it', '', 1600); };
   A.toggleSfx = () => { Sfx.toggle(); UI.refreshSheet(); };
   A.toggleAutoSub = () => { G.settings.autoSub = !G.settings.autoSub; L.save(); UI.refreshSheet(); };
+  A.toggleReplays = () => { G.settings.replays = G.settings.replays === false; L.save(); UI.refreshSheet(); };
   A.toggleCam = () => { G.settings.cam = G.settings.cam === 'follow' ? 'full' : 'follow'; L.save(); UI.refreshSheet(); };
   A.exportSave = () => {
     L.flush();

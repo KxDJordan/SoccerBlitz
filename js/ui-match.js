@@ -67,7 +67,7 @@
   function startLive(f, m, opts) {
     const side = f.h === G.userTeamId ? 0 : 1;
     const [hk, ak] = Art.kitsFor(T(f.h), T(f.a));
-    S.live = { f, m, side, opts, speed: G.settings.speed || 2, paused: false, acc: 0, last: 0, shown: 0, ticks: [], hudAt: 0, ended: false, ht: false };
+    S.live = { f, m, side, opts, speed: G.settings.speed || 2, paused: false, acc: 0, last: 0, shown: 0, ticks: [], hudAt: 0, ended: false, ht: false, rec: [], recN: 0, fxRec: m.fxTotal, goals: m.score[0] + m.score[1], pendingReplay: null, replay: null };
     S.liveSide = side;
     UI.go('match');
     const cv = document.getElementById('pitch');
@@ -86,12 +86,20 @@
     const dt = Math.min(0.1, (now - L0.last) / 1000);
     L0.last = now;
     const m = L0.m;
+    // a goal: let the celebration play, then roll the replay (the match waits while it runs)
+    const pr = L0.pendingReplay;
+    if (pr && !L0.replay && !L0.paused && now >= pr.at) { L0.pendingReplay = null; if (!L0.ht && !L0.ended && G.settings.replays !== false) startReplay(pr); }
+    if (L0.replay) {
+      if (!L0.paused) stepReplay(dt);
+      if (L0.replay) { L0.r.render(Math.min(1, L0.replay.acc / Engine.TICK)); raf = requestAnimationFrame(loop); return; }
+    }
     if (!L0.paused && !L0.ht && !L0.ended) {
       L0.acc += dt * L0.speed * L0.r.timeScale();
       let n = 0;
       while (L0.acc >= Engine.TICK && n++ < 300) {
         L0.acc -= Engine.TICK;
         m.step();
+        record(L0, now);
         if (m.phase === 'halftime') { L0.ht = true; L0.acc = 0; Sfx.play('longWhistle'); setTimeout(halftime, 700); break; }
         if (m.isFinished()) { L0.ended = true; Sfx.play('longWhistle'); setTimeout(fulltime, 900); break; }
       }
@@ -100,6 +108,92 @@
     if (now - L0.hudAt > 180) { L0.hudAt = now; hud(); }
     raf = requestAnimationFrame(loop);
   }
+  // ── instant replay ──
+  // every tick goes into a rolling ten-second tape: enough to show the build-up once the celebration is over
+  const TAPE = 200, BEFORE = 4, AFTER = 0.8;
+  function record(L0, now) {
+    const m = L0.m, b = m.ball, n = m.fxTotal - L0.fxRec;
+    L0.fxRec = m.fxTotal;
+    // a goal is waiting for its replay: once the tape holds the ball in the net, stop rolling so the build-up survives
+    const pr = L0.pendingReplay;
+    if (pr && L0.recN - 1 >= pr.idx + Math.round(AFTER / Engine.TICK)) { L0.goals = m.score[0] + m.score[1]; return; }
+    L0.rec.push({
+      time: m.time,
+      fx: n > 0 ? m.fx.slice(-Math.min(n, m.fx.length)) : null,
+      b: { x: b.pos.x, y: b.pos.y, z: b.z, vx: b.vel.x, vy: b.vel.y, owner: b.owner, curl: b.curl, power: b.power, flair: !!b.flair },
+      ps: m.onPitch.map(p => [p.id, p.pos.x, p.pos.y, p.ang, p.vel.x, p.vel.y, p.down, p.dive, p.diveDir, p.slide, p.spin, p.spinAng, p.stride, p.z, p.stun, p.twirl, p.skill ? p.skill.kind : null, p.celebrate, p.fire]),
+    });
+    L0.recN++;
+    if (L0.rec.length > TAPE) L0.rec.shift();
+    const goals = m.score[0] + m.score[1];
+    if (goals !== L0.goals) {
+      L0.goals = goals;
+      const e = [...m.events].reverse().find(x => x.type === 'goal');
+      // in quick succession (or mid-replay) the latest goal wins
+      L0.pendingReplay = { idx: L0.recN - 1, team: e ? e.team : b.lastTeam, at: now + 2300 };
+    }
+  }
+  function startReplay(pr) {
+    const L0 = S.live, m = L0.m, first = L0.recN - L0.rec.length;
+    const g0 = pr.idx - first;
+    const from = Math.max(0, g0 - Math.round(BEFORE / Engine.TICK)), to = Math.min(L0.rec.length - 1, g0 + Math.round(AFTER / Engine.TICK));
+    if (g0 < 0 || to - from < 10) return;
+    const frames = L0.rec.slice(from, to + 1);
+    // ghosts: the shape the renderer expects of the match and its players
+    const ghosts = m.players.map(p => ({ id: p.id, team: p.team, isGK: p.isGK, data: p.data, pos: { ...p.pos }, prevPos: { ...p.pos }, vel: { x: 0, y: 0 }, ang: p.ang, prevAng: p.ang, z: 0, down: 0, dive: 0, slide: 0, spin: 0, spinAng: 0, stride: 0, stun: 0, twirl: 0, skill: null, celebrate: 0, fire: -99 }));
+    const ball = { pos: { x: 0, y: 0 }, prevPos: { x: 0, y: 0 }, z: 0, prevZ: 0, vel: { x: 0, y: 0 }, owner: null, curl: 0, power: 0, flair: false };
+    const R = { cfg: m.cfg, five: m.five, weather: m.weather, wind: m.wind, wall: null, restart: null, time: 0, fx: [], fxTotal: 0, ball, players: ghosts, onPitch: [] };
+    const team = pr.team, gx = team === 0 ? m.cfg.L : 0, back = team === 0 ? 1.5 : -1.5;
+    const kp = m.keeper(1 - team);
+    const focus = { goal: [{ x: gx, y: m.cfg.GY0 }, { x: gx, y: m.cfg.GY1 }, { x: gx + back, y: m.cfg.W / 2 }], keeper: kp ? kp.id : null };
+    L0.replay = { R, frames, i: -1, acc: 0, goalAt: g0 - from };
+    applyFrame(L0.replay, 0); applyFrame(L0.replay, 0);
+    L0.r.startReplay(R, focus);
+    const ov = document.getElementById('overlay');
+    if (ov) { const b = document.createElement('button'); b.className = 'btn sm replay-skip'; b.id = 'replay-skip'; b.dataset.a = 'replaySkip'; b.textContent = 'Skip replay ⏭'; ov.appendChild(b); }
+  }
+  function applyFrame(rp, i) {
+    const R = rp.R, fr = rp.frames[i];
+    rp.i = i;
+    const b = R.ball;
+    b.prevPos = { ...b.pos }; b.prevZ = b.z;
+    Object.assign(b, { pos: { x: fr.b.x, y: fr.b.y }, z: fr.b.z, vel: { x: fr.b.vx, y: fr.b.vy }, owner: fr.b.owner, curl: fr.b.curl, power: fr.b.power, flair: fr.b.flair });
+    R.time = fr.time;
+    R.onPitch = fr.ps.map(a => {
+      const g = R.players[a[0]];
+      g.prevPos = { ...g.pos }; g.prevAng = g.ang;
+      [, g.pos.x, g.pos.y, g.ang, g.vel.x, g.vel.y, g.down, g.dive, g.diveDir, g.slide, g.spin, g.spinAng, g.stride, g.z, g.stun, g.twirl] = a;
+      g.pos = { x: a[1], y: a[2] }; g.vel = { x: a[4], y: a[5] };
+      g.skill = a[16] ? { kind: a[16] } : null; g.celebrate = a[17]; g.fire = a[18];
+      return g;
+    });
+    // the first frame of the tape has no "before": don't let anyone slide in from where they stood after the goal
+    if (i === 0) { b.prevPos = { ...b.pos }; b.prevZ = b.z; for (const g of R.onPitch) { g.prevPos = { ...g.pos }; g.prevAng = g.ang; } }
+    if (fr.fx && i > 0) for (const f of fr.fx) { if (f.type === 'whistle') continue; R.fx.push(f); R.fxTotal++; }
+  }
+  // the build-up runs at two-thirds speed, the last second before the goal (and the ball in the net) at a third
+  function stepReplay(dt) {
+    const L0 = S.live, rp = L0.replay;
+    const slow = rp.i >= rp.goalAt - Math.round(1.3 / Engine.TICK);
+    L0.r.replay.slow = slow;
+    rp.acc += dt * (slow ? 0.33 : 0.65);
+    while (rp.acc >= Engine.TICK) {
+      rp.acc -= Engine.TICK;
+      if (rp.i + 1 >= rp.frames.length) return endReplay();
+      applyFrame(rp, rp.i + 1);
+    }
+  }
+  function endReplay() {
+    const L0 = S.live;
+    if (!L0 || !L0.replay) return;
+    L0.replay = null;
+    L0.r.endReplay();
+    L0.last = performance.now(); L0.acc = 0;
+    const b = document.getElementById('replay-skip');
+    if (b) b.remove();
+  }
+  A.replaySkip = () => endReplay();
+
   function hud() {
     const L0 = S.live, m = L0.m;
     const sc = document.getElementById('sb-score'), ck = document.getElementById('sb-clock'), mo = document.getElementById('mom');
@@ -173,6 +267,7 @@
   A.liveCam = () => { const r = S.live.r; r.camera = r.camera === 'follow' ? 'full' : 'follow'; G.settings.cam = r.camera; UI.toast(r.camera === 'follow' ? '🎥 Following the ball' : '🎥 Full pitch', '', 1100); };
   A.liveSkip = () => {
     const L0 = S.live;
+    endReplay(); L0.pendingReplay = null;
     UI.confirm('Sim to the end?', 'The rest of the match plays out instantly.', 'Sim it', () => {
       const m = L0.m;
       if (m.phase === 'halftime') m.startSecondHalf();

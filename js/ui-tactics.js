@@ -183,7 +183,7 @@
   A.tacTeam = v => { const [k, x] = v.split(':'); tac().team[k] = +x; after(); };
   A.tacPk = v => { tac().pk = v ? +v : null; after(); };
   A.tacFk = v => { tac().fk = v ? +v : null; after(); };
-  A.tacPut = v => { const [i, pid] = v.split(':').map(Number); const t = tac(); const out = t.lineup[i]; t.lineup[i] = pid; t.bench = (t.bench || []).filter(x => x !== pid); if (out != null && !t.bench.includes(out)) t.bench.push(out); after(); };
+  A.tacPut = v => { const [i, pid] = v.split(':').map(Number); const t = tac(); const out = t.lineup[i]; t.lineup[i] = pid; t.bench = (t.bench || []).filter(x => x !== pid); if (out != null && !t.bench.includes(out) && t.bench.length < 9) t.bench.push(out); after(); };
   A.tacAuto = () => { L.autoLineup(L.user()); S.tac.sel = null; UI.toast('Best XI picked for this shape'); after(); };
   A.tacPreset = v => {
     const id = DATA.COACH_IDS[v], t = tac();

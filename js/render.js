@@ -187,6 +187,25 @@ const Render = (() => {
       this.vig.addColorStop(0, 'rgba(0,0,0,0)'); this.vig.addColorStop(1, 'rgba(0,0,0,.5)');
       this.drops = [];
     }
+    // ── instant replay: draw a recorded copy of the match (same shape as the live one) with a tight camera ──
+    // focus = the points that must stay in shot: the goalmouth and the keeper (the ball is added every frame)
+    startReplay(R, focus) {
+      this.replay = { live: this.m, focus, born: performance.now() };
+      this.m = R;
+      this.fxSeen = R.fxTotal;
+      this.particles = []; this.floaters = []; this.rings = []; this.trail = [];
+      this.banner = null; this.slowUntil = 0; this.hitStopUntil = 0; this.shakeUntil = 0;
+      this.flash('#ffffff', 220);
+    }
+    endReplay() {
+      if (!this.replay) return;
+      const live = this.replay.live;
+      this.replay = null;
+      this.m = live;
+      this.fxSeen = live.fxTotal;
+      this.particles = []; this.floaters = []; this.rings = []; this.trail = [];
+      this.flash('#ffffff', 220);
+    }
     // sim speed multiplier the UI should apply right now (hit-stop and goal slow-mo)
     timeScale() {
       const t = performance.now();
@@ -218,6 +237,7 @@ const Render = (() => {
       const c = this.cfg, along = c.L + 8, across = c.W + 8;
       const [ws, hs] = this.vertical ? [across, along] : [along, across];
       const base = Math.min(this.w / ws, this.visH() / hs);
+      if (this.replay) return this.replayCamera(ball, dt, base);
       const follow = this.camera === 'follow';
       const zt = follow ? (this.five ? 1.45 : this.vertical ? 2.05 : 2.3) : 1;
       this.cam.zoom += (zt - this.cam.zoom) * Math.min(1, dt * 3);
@@ -238,6 +258,43 @@ const Render = (() => {
       this.cam.y += (ty - this.cam.y) * k;
     }
 
+    // zoom in as far as possible while the ball, the goalmouth and the keeper all stay in the frame
+    replayCamera(ball, dt, base) {
+      const c = this.cfg, f = this.replay.focus, kp = f.keeper != null ? this.m.players[f.keeper] : null;
+      const pts = [ball, ...f.goal];
+      if (kp && this.m.onPitch.includes(kp)) pts.push(kp.pos);
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+      const mx = 5, my = 4; // breathing room round the edges
+      const spanX = x1 - x0 + mx * 2, spanY = y1 - y0 + my * 2;
+      const [vw, vh] = this.vertical ? [this.w, this.visH()] : [this.w, this.visH()];
+      const [sw, sh] = this.vertical ? [spanY, spanX] : [spanX, spanY];
+      const fit = Math.min(vw / (sw * base), vh / (sh * base));
+      const zt = U.clamp(fit, 1, this.five ? 3.2 : 4.2);
+      const first = performance.now() - this.replay.born < 60;
+      const kz = first ? 1 : Math.min(1, dt * 2.5);
+      this.cam.zoom += (zt - this.cam.zoom) * kz;
+      this.s = base * this.cam.zoom;
+      const tx = (x0 + x1) / 2, ty = (y0 + y1) / 2;
+      this.cam.x += (tx - this.cam.x) * kz;
+      this.cam.y += (ty - this.cam.y) * kz;
+      void c;
+    }
+    // broadcast dressing: letterbox bars, a REPLAY bug and the slow-motion tag
+    drawReplayHud(now) {
+      const ctx = this.ctx, i = this.inset || { top: 0, bottom: 0 }, t = now - this.replay.born;
+      const bar = Math.min(1, t / 250) * Math.min(34, this.h * 0.04);
+      ctx.fillStyle = 'rgba(0,0,0,.85)';
+      ctx.fillRect(0, i.top - 10, this.w, bar);
+      ctx.fillRect(0, this.h - i.bottom - bar, this.w, bar);
+      const y = i.top - 10 + bar + 22;
+      ctx.font = '900 15px Oswald, Impact, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+      const label = 'INSTANT REPLAY', w = ctx.measureText(label).width + 34;
+      ctx.fillStyle = 'rgba(8,12,22,.85)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(12, y - 13, w, 26, 6) : ctx.rect(12, y - 13, w, 26); ctx.fill();
+      ctx.fillStyle = Math.floor(now / 500) % 2 ? '#ef4444' : '#7f1d1d'; ctx.beginPath(); ctx.arc(25, y, 5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillText(label, 36, y + 1);
+      ctx.font = '700 11px Inter, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fillText(this.replay.slow ? 'SLOW MOTION' : '', 16 + w, y + 1);
+    }
     // ── main ──
     render(alpha) {
       const m = this.m, ctx = this.ctx;
@@ -287,6 +344,7 @@ const Render = (() => {
       ctx.fillStyle = this.vig; ctx.fillRect(0, 0, this.w, this.h);
       if (now < this.flashUntil) { ctx.globalAlpha = ((this.flashUntil - now) / 260) * 0.55; ctx.fillStyle = this.flashColor; ctx.fillRect(0, 0, this.w, this.h); ctx.globalAlpha = 1; }
       this.drawBanner(now);
+      if (this.replay) this.drawReplayHud(now);
     }
 
     // ── pitch furniture ──
@@ -616,6 +674,7 @@ const Render = (() => {
         case 'goal': {
           const side = f.team === 0 ? 1 : 0;
           this.net[side] = { until: now + 1200 };
+          if (this.replay) { this.burst(at, 30, [this.kits[f.team].c1, this.kits[f.team].c2, '#fde047'], 10, 'confetti'); this.rings.push({ x: at.x, y: at.y, born: now, life: 900, color: '#fde047', max: 8 }); sound('post'); break; }
           this.burst(at, 70, [this.kits[f.team].c1, this.kits[f.team].c2, '#fde047', '#ffffff'], 14, 'confetti');
           this.rings.push({ x: at.x, y: at.y, born: now, life: 900, color: '#fde047', max: 12 });
           this.shake(14, 600); this.flash('#ffffff', 260);
