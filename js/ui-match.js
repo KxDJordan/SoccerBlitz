@@ -109,7 +109,7 @@
     Sfx.crowdLevel(0.3 + Math.abs(m.momentum) * 0.7);
     // ticker: the latest notable events
     const evs = m.events;
-    const notable = ['goal', 'red', 'yellow', 'injury', 'sub', 'fire', 'hattrick', 'post', 'save', 'penalty', 'miss', 'pen'];
+    const notable = ['goal', 'red', 'yellow', 'injury', 'sub', 'fire', 'hattrick', 'post', 'save', 'penalty', 'miss', 'pen', 'offside'];
     for (; L0.shown < evs.length; L0.shown++) {
       const e = evs[L0.shown];
       if (!notable.includes(e.type)) continue;
@@ -143,7 +143,7 @@
     const bottom = dock ? c.bottom - dock.getBoundingClientRect().top + 6 : 0;
     L0.r.setInsets(top, bottom);
   }
-  const icon = t => ({ goal: '⚽', red: '🟥', yellow: '🟨', injury: '🩹', sub: '🔁', fire: '🔥', hattrick: '🎩', post: '🥅', save: '🧤', penalty: '❗', miss: '💨', pen: '🎯' }[t] || '•');
+  const icon = t => ({ goal: '⚽', red: '🟥', yellow: '🟨', injury: '🩹', sub: '🔁', fire: '🔥', hattrick: '🎩', post: '🥅', save: '🧤', penalty: '❗', miss: '💨', pen: '🎯', offside: '🚩' }[t] || '•');
 
   SCREENS.match = () => {
     const L0 = S.live;
@@ -196,7 +196,7 @@
     const [x, y] = s.stats;
     const row = (label, v0, v1, fmt = v => v) => { const t = (v0 + v1) || 1; return `<div class="statrow"><b>${fmt(v0)}</b><div><div class="c">${label}</div><div class="duo"><i style="width:${(v0 / t) * 100}%;background:${h.kit.c1 === '#F4F5F7' ? '#cbd5e1' : h.kit.c1}"></i><i style="width:${(v1 / t) * 100}%;background:${a.kit.c1 === '#F4F5F7' ? '#cbd5e1' : a.kit.c1}"></i></div></div><b>${fmt(v1)}</b></div>`; };
     return `<div class="flex between mb8"><span class="flex" style="gap:6px">${UI.crest(h, 22)}<b>${esc(h.abbr)}</b></span><span class="flex" style="gap:6px"><b>${esc(a.abbr)}</b>${UI.crest(a, 22)}</span></div>
-      ${row('Possession', x.possPct, y.possPct, v => `${v}%`)}${row('Shots', x.shots, y.shots)}${row('On target', x.onTarget, y.onTarget)}${row('Expected goals', +x.xg.toFixed(2), +y.xg.toFixed(2), v => v.toFixed(2))}${row('Passes completed', x.passesOk, y.passesOk)}${row('Tackles won', x.tacklesWon, y.tacklesWon)}${row('Big hits 💥', x.hits, y.hits)}${row('Corners', x.corners, y.corners)}${row('Fouls', x.fouls, y.fouls)}${row('Cards', x.yellows + x.reds * 2, y.yellows + y.reds * 2)}${x.woodwork + y.woodwork ? row('Woodwork', x.woodwork, y.woodwork) : ''}`;
+      ${row('Possession', x.possPct, y.possPct, v => `${v}%`)}${row('Shots', x.shots, y.shots)}${row('On target', x.onTarget, y.onTarget)}${row('Expected goals', +x.xg.toFixed(2), +y.xg.toFixed(2), v => v.toFixed(2))}${row('Passes completed', x.passesOk, y.passesOk)}${row('Tackles won', x.tacklesWon, y.tacklesWon)}${row('Big hits 💥', x.hits, y.hits)}${row('Corners', x.corners, y.corners)}${row('Fouls', x.fouls, y.fouls)}${(x.offsides || 0) + (y.offsides || 0) ? row('Offsides', x.offsides || 0, y.offsides || 0) : ''}${row('Cards', x.yellows + x.reds * 2, y.yellows + y.reds * 2)}${x.woodwork + y.woodwork ? row('Woodwork', x.woodwork, y.woodwork) : ''}`;
   }
   function ratingsList(m, side) {
     const ps = m.players.filter(p => p.team === side && m.minutesPlayed(p) > 0).sort((a, b) => a.slot - b.slot || a.onAt - b.onAt);

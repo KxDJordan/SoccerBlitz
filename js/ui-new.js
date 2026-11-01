@@ -55,11 +55,14 @@
   SCREENS.menu.resize = () => { if (demo) demo.r.resize(); };
 
   A.continue = () => { UI.go('hub', { tab: 'home' }); };
+  // the career that was loaded before "new game": the fresh world stays unsaved until the user takes charge
+  let prevG = null;
   A.newGame = v => {
     const go = () => {
       UI.closeSheet();
       UI.toast('Building the world…', '', 1200);
       setTimeout(() => {
+        if (G && G.ready && G.userTeamId != null) prevG = G;
         L.genWorld();
         S.create = { step: v === 'challenge' ? 'challenge' : 'nation', mode: v, nation: 0, tier: 0, team: null, challenge: null, name: '', ident: 'gegenpress' };
         UI.go('new');
@@ -175,7 +178,7 @@
     const c = S.create;
     const order = c.mode === 'challenge' ? ['challenge', 'team', 'manager'] : c.customTid != null && c.team === c.customTid ? ['nation', 'team', 'custom', 'manager'] : ['nation', 'team', 'manager'];
     const i = order.indexOf(c.step);
-    if (i <= 0) { G = null; UI.go('menu'); return; }
+    if (i <= 0) { G = prevG; prevG = null; S.create = null; UI.go('menu'); return; }
     c.step = order[i - 1]; UI.render();
   };
   A.pickChallenge = v => { S.create.challenge = v; S.create.team = null; S.create.step = 'team'; UI.render(); };
@@ -189,7 +192,7 @@
     const c = S.create;
     const name = ((document.getElementById('mgr-name') || {}).value || c.name || '').trim() || 'The Gaffer';
     L.startCareer({ teamId: c.team, mgrName: name, mgrIdent: c.challenge === 'blitz' ? 'blitz' : c.ident, mode: c.mode, challenge: c.challenge || null });
-    S.create = null;
+    S.create = null; prevG = null;
     Sfx.play('win');
     UI.go('hub', { tab: 'home' });
     UI.toast(`Welcome to ${esc(L.user().name)}, ${esc(name)}!`);

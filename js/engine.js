@@ -97,10 +97,10 @@ const Engine = (() => {
     }
 
     emptyStats() {
-      return { poss: 0, passes: 0, passesOk: 0, shots: 0, onTarget: 0, xg: 0, corners: 0, fouls: 0, yellows: 0, reds: 0, tackles: 0, tacklesWon: 0, interceptions: 0, saves: 0, blocks: 0, crosses: 0, hits: 0, woodwork: 0 };
+      return { poss: 0, passes: 0, passesOk: 0, shots: 0, onTarget: 0, xg: 0, corners: 0, fouls: 0, yellows: 0, reds: 0, tackles: 0, tacklesWon: 0, interceptions: 0, saves: 0, blocks: 0, crosses: 0, hits: 0, woodwork: 0, offsides: 0, takeOns: 0, throwIns: 0, goalKicks: 0 };
     }
     emptyPS() {
-      return { goals: 0, assists: 0, shots: 0, onTarget: 0, passes: 0, passesOk: 0, keyPasses: 0, tackles: 0, tacklesWon: 0, interceptions: 0, blocks: 0, saves: 0, aerials: 0, fouls: 0, yellow: 0, red: 0, hits: 0, dribbles: 0, conceded: 0 };
+      return { goals: 0, assists: 0, shots: 0, onTarget: 0, passes: 0, passesOk: 0, keyPasses: 0, tackles: 0, tacklesWon: 0, interceptions: 0, blocks: 0, saves: 0, aerials: 0, fouls: 0, yellow: 0, red: 0, hits: 0, dribbles: 0, takeOns: 0, offsides: 0, conceded: 0 };
     }
 
     // ── public API ──
@@ -218,7 +218,7 @@ const Engine = (() => {
     raw(p, k) { return p.data.a[AK[k]]; }
     maxSpeed(p) {
       const burst = this.time < p.burstUntil ? 1.15 : 1, fire = this.time < p.fire ? 1.06 : 1;
-      return (5.2 + (3.3 * this.raw(p, 'pace')) / 99) * (0.72 + 0.28 * p.stamina) * this.weather.footing * burst * fire;
+      return (5.2 + (3.3 * this.raw(p, 'pace')) / 99) * (0.68 + 0.32 * p.stamina) * this.weather.footing * burst * fire;
     }
     accel(p) { return (5 + (6 * this.raw(p, 'accel')) / 99) * this.weather.footing * (this.time < p.burstUntil ? 1.3 : 1); }
     aerialScore(p) { const w = this.possession === p.team ? p.rIP.w.aerial : p.rOOP.w.aerial; return 0.6 * this.attr(p, 'heading') + 0.4 * this.attr(p, 'strength') + 15 * (w - 1); }
@@ -230,13 +230,23 @@ const Engine = (() => {
       const angle = Math.abs(Math.atan2(c.GY1 - pos.y, dx) - Math.atan2(c.GY0 - pos.y, dx));
       return Math.min(0.7, 0.75 * angle * angle * (this.five ? 0.75 : 1));
     }
-    shotXg(p, pressure, header) {
-      let xg = this.angleXg(p.team, p.pos);
+    // one xG for both the decision and the outcome: angle/distance, pressure, bodies in the way, headers
+    shotXg(p, pressure, header, crowd = 0) {
+      // angleXg is a threat measure; ×0.8 puts shots near real-world xG (pen spot ~0.25, 20 m ~0.08)
+      let xg = this.angleXg(p.team, p.pos) * 0.8;
       xg *= 1 - 0.5 * Math.min(1, pressure) * (1.2 - (0.6 * this.attr(p, 'composure')) / 99);
+      xg *= Math.pow(0.85, crowd);
       if (header) xg *= 0.6;
       return clamp(xg, 0.005, 0.8);
     }
-    finishMult(p, header) { return 0.3 + (1.2 * this.attr(p, header ? 'heading' : 'finishing')) / 99; }
+    // ~1 for an average (70) finisher, ~1.25 for an elite one
+    finishMult(p, header) { return 0.3 + this.attr(p, header ? 'heading' : 'finishing') / 100; }
+    // ~1 against an average (70) keeper; elite keepers shave ~20% off, poor ones concede ~20% more
+    keeperMult(kp) {
+      if (!kp || kp.down > 0.5) return 1.6;
+      const q = 0.7 * this.attr(kp, 'goalkeeping') + 0.15 * this.attr(kp, 'positioning') + 0.15 * this.attr(kp, 'composure');
+      return 1.5 - q / 140;
+    }
     blockers(p) {
       const g = this.attackGoal(p.team);
       let n = 0;
@@ -258,6 +268,51 @@ const Engine = (() => {
       }
       return Math.min(4, n);
     }
+    // ── offside ──
+    // the second-last defender (keeper counts), in team t's attacking u
+    offsideLineU(t) {
+      let a = -1, b2 = -1;
+      for (const o of this.onPitch) {
+        if (o.team === t) continue;
+        const u = this.toU(t, o.pos.x);
+        if (u > a) { b2 = a; a = u; } else if (u > b2) b2 = u;
+      }
+      return b2 < 0 ? 1 : b2;
+    }
+    // is team-mate m in an offside position for a ball played from ballX? (0.3 m benefit of the doubt)
+    offsidePos(m, ballX, lineU) {
+      if (this.five) return false; // academy 5-a-side plays without offside
+      const t = m.team, u = this.toU(t, m.pos.x), tol = 0.3 / this.cfg.L;
+      return !m.isGK && u > 0.5 && u > this.toU(t, ballX) + tol && u > lineU + tol;
+    }
+    // how the passer reads it: clearly-off runners are seen, the tight calls are often missed
+    offsideSeen(m, ballX, lineU, vision) {
+      if (!this.offsidePos(m, ballX, lineU)) return false;
+      const t = m.team, margin = (this.toU(t, m.pos.x) - Math.max(lineU, this.toU(t, ballX))) * this.cfg.L;
+      return margin > this.rng.range(0, 3.5 * (1.2 - vision));
+    }
+    // freeze who was offside the moment the ball was played forward by p's side
+    markOffside(p) {
+      const b = this.ball;
+      if (this.freeRestart === p.id) { this.freeRestart = null; b.offside = null; return; }
+      this.freeRestart = null;
+      const line = this.offsideLineU(p.team), ids = [];
+      for (const m of this.onPitch) if (m.team === p.team && m.id !== p.id && m.down <= 0.5 && this.offsidePos(m, p.pos.x, line)) ids.push(m.id);
+      b.offside = ids.length ? { team: p.team, ids } : null;
+    }
+    // p is about to play the ball: whistle if he was offside when it was played; any touch ends the phase
+    offsideCheck(p) {
+      const b = this.ball, off = b.offside;
+      if (!off) return false;
+      b.offside = null;
+      if (p.team !== off.team || !off.ids.includes(p.id)) return false;
+      this.stats[p.team].offsides++;
+      p.ps.offsides++;
+      this.emit('offside', p.team, `Offside! ${p.data.ln} is flagged`, { pid: p.data.id });
+      this.effect('special', p.pos, p.team, { label: 'Offside', pid: p.data.id });
+      this.setRestart('freekick', 1 - p.team, this.clampPitch(p.pos));
+      return true;
+    }
     threat(t, pos) { const u = this.toU(t, pos.x); return 0.15 + 0.6 * u * u + 3 * this.angleXg(t, pos); }
     inTransition(t) { return this.time - this.regainAt[t] < TRANSITION_SECONDS; }
 
@@ -277,26 +332,68 @@ const Engine = (() => {
         shiftV = 0.12;
       } else {
         line = 0.22 + 0.045 * ti.lineHeight + 0.03 * ti.pressing + 0.02 * ti.mentality + (bu - 0.5) * 0.32;
+        // with the ball in their final third the defence drops into the box, deeper still against a wide ball (crosses)
+        if (bu < 0.36) line -= (0.36 - bu) * 0.3 + (Math.abs(bv - 0.5) > 0.28 ? 0.02 : 0);
         depth = 0.37 + 0.02 * ti.lineHeight + 0.015 * ti.mentality;
-        widthF = 0.84 + 0.07 * ti.width;
-        shiftV = 0.2;
+        // a compact block: narrower than the shape on paper and sliding hard toward the ball
+        widthF = 0.71 + 0.05 * ti.width;
+        shiftV = 0.45;
       }
-      line = clamp(line, 0.06, 0.56);
+      line = clamp(line + this.lineStep(p.team), 0.06, 0.56);
       // the role decides the movement; the focus (Defend / Balanced / Attack) stretches or tempers it
       const off = inPoss ? role.attack : role.defend, f = p.instr.runs || 0;
-      const du = inPoss ? off.du * (1 + 0.45 * f) + 0.035 * f : off.du + 0.03 * f;
+      let du = inPoss ? TAC.focusDu(off.du, f) : (off.du > 0 ? off.du * 0.65 : off.du) + 0.03 * f;
+      if (inPoss && role.stDrop && slot.pos === 'ST') du += role.stDrop;
       const dv = inPoss ? off.dv * (1 + 0.3 * f) : off.dv;
-      let u = line + slot.u * depth + du;
-      const toward = Math.sign(0.5 - slot.v);
-      const v = 0.5 + (slot.v - 0.5) * widthF + toward * dv + (bv - 0.5) * shiftV;
-      if (oppLineU !== undefined) u = Math.min(u, Math.max(oppLineU, inPoss ? bu : 0) + 0.01);
+      // out of possession the front of the block tucks in behind the ball, so the team stays ~40m long
+      const su = !inPoss && slot.u > 0.45 ? 0.45 + (slot.u - 0.45) * 0.38 : slot.u;
+      let u = line + su * depth + du;
+      // and the back line closes the gaps between its defenders a little more than the rest
+      if (!inPoss && slot.u < 0.1) widthF *= 0.9;
+      let v;
+      const wideSlot = slot.pos === 'LW' || slot.pos === 'RW' || slot.pos === 'LM' || slot.pos === 'RM';
+      if (inPoss && wideSlot && off.dv <= 0.08) {
+        // a wide role holds the touchline with the ball, ready for the switch (inverted roles come inside instead)
+        const edge = clamp(0.06 - 0.015 * ti.width + Math.min(0, dv) * 0.4, 0.035, 0.1);
+        v = slot.v < 0.5 ? edge : 1 - edge;
+      } else {
+        // with the ball only the ball-side half (and the spine) slides over; the far side holds its width
+        const nearHalf = Math.abs(slot.v - 0.5) < 0.05 || (bv - 0.5) * (slot.v - 0.5) > 0;
+        const shift = inPoss && !nearHalf ? shiftV * 0.3 : shiftV;
+        v = 0.5 + (slot.v - 0.5) * widthF + TAC.lateral(slot, p.slot, dv) + (bv - 0.5) * shift;
+      }
+      // a poacher lives in the box once the ball is in the final half
+      if (inPoss && role.boxStay && bu > 0.5) u = Math.max(u, 0.8 + 0.08 * (bu - 0.5));
+      // the front line pins the defence: once the ball is over halfway, forwards (bar the ones who drop off) play on
+      // the last defender's shoulder rather than hanging off it
+      if (inPoss && oppLineU !== undefined && (slot.u >= 0.85 || (slot.u >= 0.65 && role.w.run >= 1.4)) && !role.stDrop && off.du > -0.05 && bu > 0.42) u = Math.max(u, oppLineU - (bu > 0.6 ? 0.012 : 0.025));
+      // hold an onside position: never beyond the last defender unless the ball is further on
+      if (oppLineU !== undefined) u = Math.min(u, Math.max(oppLineU - 0.005, inPoss ? bu - 0.01 : 0));
       return this.fromUV(p.team, clamp(u, 0.03, 0.96), clamp(v, 0.03, 0.97));
     }
+    // the back line steps up together for a moment when the opposition plays it backward or square, or after a clearance
+    lineStep(t) { return this.stepUntil && this.time < this.stepUntil[t] ? 0.04 : 0; }
     keeperTarget(p, ball) {
-      const sweeper = !!p.rOOP.sweeper, lh = this.tac(p.team).team.lineHeight;
+      const c = this.cfg, sweeper = !!p.rOOP.sweeper, lh = this.tac(p.team).team.lineHeight;
       const bu = this.toU(p.team, ball.x), bv = this.toV(p.team, ball.y);
-      const u = sweeper ? 0.03 + 0.1 * Math.max(0, bu - 0.4) + 0.012 * lh : 0.012 + 0.012 * bu;
-      return this.fromUV(p.team, u, 0.5 + (bv - 0.5) * 0.18);
+      const crude = 0.012 + 0.012 * bu;
+      if (sweeper) {
+        // a sweeper keeper tracks the defensive line, high enough to sweep up balls played in behind it
+        const u = clamp(0.06 + 0.15 * (bu - 0.4) + 0.012 * lh + 0.5 * this.lineStep(p.team), crude, 0.2);
+        return this.fromUV(p.team, u, 0.5 + (bv - 0.5) * (u > 0.08 ? 0.3 : 0.18));
+      }
+      // a keeper stands on the line from the middle of the goal to the ball, a step or two off the line, coming out
+      // further to narrow the angle when the ball is near; positioning decides how close to that ideal they get
+      const q = clamp(this.attr(p, 'positioning') / 99, 0, 1);
+      const naive = this.fromUV(p.team, crude, 0.5 + (bv - 0.5) * 0.18);
+      const g = this.ownGoal(p.team), to = sub(ball, g), dBall = len(to);
+      if (dBall < 0.5) return naive;
+      const near = clamp(1 - (dBall - 11 * c.k) / (25 * c.k), 0, 1);
+      const depth = crude * c.L * (0.85 + 0.3 * q) + near * q * 1.4 * c.k;
+      const dir = scale(to, 1 / dBall);
+      const ideal = { x: g.x + Math.sign(dir.x || (p.team === 0 ? 1 : -1)) * Math.max(0.5, Math.abs(dir.x) * depth), y: clamp(g.y + dir.y * depth, c.GY0 + 0.3, c.GY1 - 0.3) };
+      const w = 0.3 + 0.7 * q;
+      return { x: naive.x + (ideal.x - naive.x) * w, y: naive.y + (ideal.y - naive.y) * w };
     }
 
     // ── main loop ──
@@ -364,7 +461,17 @@ const Engine = (() => {
       for (const t of [0, 1]) {
         let m = 0.5;
         for (const o of this.onPitch) if (o.team !== t && !o.isGK) m = Math.max(m, this.toU(t, o.pos.x));
-        this.oppLine[t] = m;
+        // no offside in the academy 5-a-side: only a loose "don't camp on the keeper" limit applies
+        this.oppLine[t] = this.five ? Math.max(m, 0.9) : m;
+      }
+      // step-up triggers: the opposition plays it backward or square away from our box, or we clear our lines
+      if (!this.stepUntil) this.stepUntil = [-99, -99];
+      const b = this.ball, sp = len(b.vel);
+      if (b.owner === null && !b.shot && sp > 6) {
+        const kt = b.lastTeam, def = 1 - kt, fwd = (kt === 0 ? b.vel.x : -b.vel.x) / sp;
+        const defU = this.toU(def, b.pos.x);
+        if (defU > 0.3 && (fwd < -0.2 || (Math.abs(fwd) < 0.3 && defU > 0.4))) this.stepUntil[def] = this.time + 1.5;
+        if (fwd > 0.5 && sp > 12 && b.lofted && b.receiver === null && this.toU(kt, b.loftFrom.x) < 0.35) this.stepUntil[kt] = this.time + 1.8;
       }
     }
 
@@ -412,13 +519,17 @@ const Engine = (() => {
       }
       if (b.receiver !== null && !this.players[b.receiver].active) b.receiver = null;
       const recv = b.receiver !== null ? this.players[b.receiver] : null;
+      // earliest an opponent of each side gets there (a sweeper keeper only leaves the box to win a race)
+      const firstOpp = [99, 99];
+      for (const p of this.onPitch) { const tt = reach.get(p.id).tt - (recv && recv.id === p.id ? 0.3 : 0); firstOpp[1 - p.team] = Math.min(firstOpp[1 - p.team], tt); }
       for (const t of [0, 1]) {
         let best = -1, bestT = Infinity, bestPt = vec();
         for (const p of this.onPitch) {
           if (p.team !== t) continue;
           const r = reach.get(p.id);
           let tt = r.tt;
-          if (p.isGK && !this.inAttackingBox(1 - t, r.pt)) continue;
+          if (p.isGK && !this.inAttackingBox(1 - t, r.pt)) {
+            if (!p.rOOP.sweeper || this.toU(t, r.pt.x) > 0.28 || tt > firstOpp[t] - 0.1) continue;          }
           if (recv && recv.id === p.id) tt -= 0.6;
           if (tt < bestT) { bestT = tt; best = p.id; bestPt = r.pt; }
         }
@@ -448,19 +559,25 @@ const Engine = (() => {
       const counter = this.time - this.lostBallAt[def] < 3 && ti.pressing >= 0 ? 8 : 0;
       const k = Math.max(0.65, this.cfg.k);
       for (let i = 0; i < Math.min(3, cands.length); i++) {
-        const p = cands[i], d = dist(p.pos, carrier.pos);
-        let range = ((10 + (ti.pressing < 0 ? 4 : 6) * ti.pressing + 1.5 * ti.mentality) * Math.sqrt(p.rOOP.w.press) * (1 + 0.2 * p.instr.agg) + counter) * k;
+        const p = cands[i], d = dist(p.pos, carrier.pos), wp = p.rOOP.w.press;
+        // the role's press weight scales how far they'll go to close the ball down
+        let range = ((10 + (ti.pressing < 0 ? 4 : 6) * ti.pressing + 1.5 * ti.mentality) * wp * (1 + 0.2 * p.instr.agg) + counter * Math.min(1.2, wp)) * k;
         if (depth < 0.35) range += 8 * k;
         if (depth > 0.65 && ti.pressing < 1) range *= 0.6;
-        const dwelling = i === 0 && this.time - carrier.gotBallAt > 1.8;
-        const limit = dwelling ? Infinity : i === 0 ? range + 4 : i === 1 ? range * (ti.pressing > 0 ? 1 : 0.6) : ti.pressing > 0 ? range * 0.6 : 0;
+        // a carrier dwelling on it draws the nearest willing presser from further out; reluctant pressers never make up the 2nd/3rd man
+        const dwelling = i === 0 && wp >= 0.7 && this.time - carrier.gotBallAt > 1.8;
+        const limit = dwelling ? range * 1.8 : i === 0 ? range + 4 : wp < 0.7 ? 0 : i === 1 ? range * (ti.pressing > 0 ? 1 : 0.6) : ti.pressing > 0 ? range * 0.6 : 0;
         if (d < limit) this.pressers.add(p.id);
       }
       // counter-press: for a few seconds after losing it, everyone close by swarms the ball
       if (this.time - this.lostBallAt[def] < 3 && ti.pressing >= 0) {
         const reach = (11 + 3 * ti.pressing) * k;
         let n = 0;
-        for (const p of cands) { if (n >= 5) break; if (dist(p.pos, carrier.pos) < reach) { this.pressers.add(p.id); n++; } }
+        for (const p of cands) {
+          if (n >= 5) break;
+          const wp = p.rOOP.w.press;
+          if (wp >= 0.7 && dist(p.pos, carrier.pos) < reach * Math.min(1.3, wp)) { this.pressers.add(p.id); n++; }
+        }
       }
     }
     computeBlocker() {
@@ -485,14 +602,31 @@ const Engine = (() => {
       if (pos === 'ST' || pos === 'LW' || pos === 'RW') return 'fwd';
       return 'mid';
     }
+    // how far a role ranges to defend: roaming only widens the net for roles that want to win the ball back
+    defRoam(p) { const r = p.rOOP.roam || 1; return p.rOOP.w.press >= 1 ? r : Math.min(1, r); }
+    // where the ball is about to be: the defending shape reads it a moment early so the block moves as one
+    ballLead() {
+      const b = this.ball;
+      if (b.owner !== null) { const c = this.players[b.owner]; return this.clampPitch(add(c.pos, scale(c.vel, 0.6))); }
+      return b.shot ? b.pos : this.clampPitch(add(b.pos, scale(b.vel, 0.25)));
+    }
     computeMarks() {
       const prev = new Map(this.marks);
       this.marks.clear();
       if (this.reset) return;
       const att = this.possession, def = 1 - att, b = this.ball, k = this.cfg.k;
-      const defenders = this.teamOn(def).filter(p => !p.isGK && !this.pressers.has(p.id) && p.id !== this.blocker && p.down <= 0);
-      const anchors = new Map();
-      for (const d of defenders) anchors.set(d.id, this.formationTarget(d, b.pos, false, this.oppLine[def]));
+      // free roles (Classic 10, Trequartista) are excused from marking: they stay up as the outlet
+      const defenders = this.teamOn(def).filter(p => !p.isGK && !this.pressers.has(p.id) && p.id !== this.blocker && p.down <= 0 && !p.rOOP.free);
+      const anchors = new Map(), lead = this.ballLead();
+      let lineSum = 0, lineN = 0;
+      for (const d of defenders) {
+        const a = this.formationTarget(d, lead, false, this.oppLine[def]);
+        anchors.set(d.id, a);
+        if (this.zoneOf(d) === 'def') { lineSum += this.toU(def, a.x); lineN++; }
+      }
+      // where the back line holds (markAdjust keeps defenders within a few metres of it)
+      if (!this.defLineU) this.defLineU = [0.25, 0.25];
+      if (lineN) this.defLineU[def] = lineSum / lineN;
       const attackers = this.teamOn(att).filter(a => !a.isGK && a.id !== b.owner)
         .map(a => ({ a, danger: this.threat(att, a.pos) + (a.action === 'run' ? 0.3 : 0) }))
         .sort((x, y) => y.danger - x.danger);
@@ -502,14 +636,16 @@ const Engine = (() => {
         let best = -1, bestCost = Infinity;
         for (const d of defenders) {
           if (taken.has(d.id)) continue;
-          const anchor = anchors.get(d.id), zone = this.zoneOf(d), roam = d.rOOP.roam || 1;
+          const anchor = anchors.get(d.id), zone = this.zoneOf(d), roam = this.defRoam(d);
           let cost = Math.min(dist(anchor, a.pos), dist(d.pos, a.pos) * 1.2);
           if (zone === 'def' && au > 0.6) cost += 20;
+          // a defender doesn't follow a forward who drops off deep into midfield: hand them on (unless a stopper)
+          if (zone === 'def' && d.rOOP.id !== 'stp' && au > this.defLineU[def] + 0.12) cost += 10;
           if (zone === 'fwd' && au < this.toU(def, anchor.x) - 0.1) cost += 30;
           if (zone === 'mid' && au < 0.2) cost += 6;
           cost /= roam;
           if (prev.get(d.id) === a.id) cost -= 4;
-          const max = (zone === 'def' ? 26 : zone === 'mid' ? 18 : 9) * Math.max(0.7, k);
+          const max = (zone === 'def' ? 20 : zone === 'mid' ? 18 : 9) * Math.max(0.7, k);
           if (cost < max && cost < bestCost) { bestCost = cost; best = d.id; }
         }
         if (best >= 0) { this.marks.set(best, a.id); taken.add(best); }
@@ -517,17 +653,44 @@ const Engine = (() => {
     }
     inCrossingZone(t, v) { const edge = 0.24 + 0.08 * this.tac(t).team.width; return v < edge || v > 1 - edge; }
     computeBoxRuns() {
-      this.boxRuns.clear();
       const b = this.ball;
+      // while a pass is travelling the runners keep attacking their zones (offside was judged at the kick)
+      if (b.owner === null && !b.shot && this.boxRuns.size && this.time - (this.boxRunsAt || 0) < 2.5) return;
+      const prevRuns = new Set(this.boxRuns.keys());
+      this.boxRuns.clear();
       if (b.owner === null) return;
+      this.boxRunsAt = this.time;
       const carrier = this.players[b.owner], t = carrier.team;
       const u = this.toU(t, carrier.pos.x), v = this.toV(t, carrier.pos.y);
-      if (u < 0.68 || !this.inCrossingZone(t, v)) return;
+      // in the final third the forwards fill the box: always when the ball is wide, and when it's central once the
+      // defence has dropped in front of its box (against a high line they run in behind instead)
+      const wideBall = this.inCrossingZone(t, v);
+      if (u < (wideBall ? 0.55 : 0.62) || (!wideBall && this.oppLine[t] < 0.8)) return;
       const near = v < 0.5 ? -1 : 1;
-      const zones = [this.fromUV(t, 0.955, 0.5 + near * 0.06), this.fromUV(t, 0.955, 0.5 - near * 0.08), this.fromUV(t, 0.89, 0.5)];
-      const runners = this.teamOn(t).filter(p => p !== carrier && !p.isGK && p.down <= 0 && (this.slotFor(p, true).u >= 0.65 || p.rIP.w.run >= 1.4))
-        .sort((a, c) => this.slotFor(c, true).u - this.slotFor(a, true).u || a.slot - c.slot);
-      runners.slice(0, this.five ? 2 : 3).forEach((p, i) => this.boxRuns.set(p.id, zones[i]));
+      const Z = { near: this.fromUV(t, 0.955, 0.5 + near * 0.06), far: this.fromUV(t, 0.955, 0.5 - near * 0.08), spot: this.fromUV(t, 0.86, 0.5 - near * 0.02) };
+      // who attacks the cross: runners by role appetite, how close they already are and how well they read it
+      const cands = [];
+      for (const p of this.teamOn(t)) {
+        if (p === carrier || p.isGK || p.down > 0) continue;
+        const w = p.rIP.w.run, slot = this.slotFor(p, true);
+        // forwards and runners first; an advanced midfielder makes up the numbers
+        const midFill = slot.u >= 0.4 && w >= 0.8 && this.zoneOf(p) === 'mid';
+        if (slot.u < 0.65 && w < 1.3 && !midFill) continue;
+        const q = this.attr(p, 'positioning') / 99, pu = this.toU(t, p.pos.x);
+        const score = w + 1.5 * pu + 0.5 * q + (slot.u >= 0.65 ? 0.3 : 0) - (this.zoneOf(p) === 'def' ? 0.6 : 0) - (slot.u < 0.65 && w < 1.3 ? 0.5 : 0) + (prevRuns.has(p.id) ? 0.4 : 0);
+        cands.push({ p, score, slot });
+      }
+      cands.sort((a, c) => c.score - a.score || a.p.slot - c.p.slot);
+      const free = new Set(['near', 'far', 'spot']);
+      for (const { p, slot } of cands.slice(0, this.five ? 2 : 3)) {
+        // the role picks the zone: target men and poachers the near post, inside forwards the far post,
+        // late-arriving midfielders the penalty spot; otherwise wide players go far, strikers near
+        const pos = slot.pos, wide = pos === 'LW' || pos === 'RW' || pos === 'LM' || pos === 'RM' || pos === 'LB' || pos === 'RB';
+        const pref = p.rIP.boxZone || (wide ? 'far' : pos === 'ST' ? 'near' : 'spot');
+        const pick = free.has(pref) ? pref : ['near', 'far', 'spot'].find(z => free.has(z));
+        free.delete(pick);
+        this.boxRuns.set(p.id, Z[pick]);
+      }
     }
 
     transitionEffort(p) {
@@ -538,7 +701,14 @@ const Engine = (() => {
       if (!won && !lost) return;
       const tempo = this.tac(p.team).team.tempo;
       // caught out of shape after losing it: everybody sprints back, whatever the tempo
-      if (lost) { if (V.dist(p.pos, p.target) > 6) p.urgency = Math.max(p.urgency, 1); return; }
+      // caught on the wrong side of the ball, or well upfield of where they should be: sprint back; otherwise a hard jog
+      if (lost) {
+        const c = this.cfg, pu = this.toU(p.team, p.pos.x);
+        const wrongSide = pu > this.toU(p.team, this.ball.pos.x) - 0.02, deficit = (pu - this.toU(p.team, p.target.x)) * c.L > 6 * c.k;
+        if (wrongSide || deficit) p.urgency = Math.max(p.urgency, 1);
+        else if (V.dist(p.pos, p.target) > 6 * c.k) p.urgency = Math.max(p.urgency, 0.85);
+        return;
+      }
       const effort = tempo > 0 ? 1 : tempo === 0 ? 0.88 : 0.66;
       p.urgency = tempo > 0 ? Math.max(p.urgency, effort) : Math.min(p.urgency, effort);
       if (won && tempo > 0 && (p.action === 'position' || p.action === 'support')) {
@@ -561,16 +731,29 @@ const Engine = (() => {
       if (cut) { p.target = cut; p.urgency = 1; p.action = 'chase'; return; }
       if (p.isGK) return this.thinkKeeper(p);
       const inPoss = this.possession === p.team;
-      const base = this.formationTarget(p, b.pos, inPoss, this.oppLine[p.team]);
+      const base = this.formationTarget(p, inPoss ? b.pos : this.ballLead(), inPoss, this.oppLine[p.team]);
       if (inPoss) return this.thinkAttacking(p, base);
       this.thinkDefending(p, base);
     }
     thinkAttacking(p, base) {
       const b = this.ball, ti = this.tac(p.team).team;
-      const box = this.boxRuns.get(p.id);
-      if (box) { p.target = box; p.urgency = 1; p.action = 'box'; return; }
+      const box = this.boxRuns.get(p.id), line = this.oppLine[p.team];
+      if (box) {
+        // attack the zone, but arrive onside: never beyond the last defender before the ball is delivered
+        const cu = b.owner !== null ? this.toU(p.team, this.players[b.owner].pos.x) : 1, cap = Math.max(line - 0.005, cu - 0.01);
+        p.target = b.owner !== null && this.toU(p.team, box.x) > cap ? this.fromUV(p.team, cap, this.toV(p.team, box.y)) : box;
+        p.urgency = dist(p.pos, p.target) > 2.5 * this.cfg.k ? 1 : 0.8; p.action = 'box'; return;
+      }
       if (!p.runTarget && b.owner !== null) this.maybeStartRun(p, base, ti);
-      if (p.runTarget) { p.target = p.runTarget; p.urgency = 1; p.action = 'run'; return; }
+      if (p.runTarget) {
+        p.action = 'run';
+        // a run in behind starts from onside: hold on the last defender's shoulder until the carrier can release it
+        if (!p.runGo && b.owner !== null && this.toU(p.team, p.runTarget.x) > line - 0.005) {
+          if (this.runReady(p)) { p.runGo = true; if (this.raw(p, 'accel') > 70) p.burstUntil = Math.max(p.burstUntil, this.time + 1.2); }
+          else { p.target = this.fromUV(p.team, line - 0.004, this.toV(p.team, p.runTarget.y)); p.urgency = 0.85; return; }
+        }
+        p.target = p.runTarget; p.urgency = 1; return;
+      }
       if (b.owner !== null) {
         const carrier = this.players[b.owner];
         if (p.supportTimer <= 0 || !p.supportTarget) {
@@ -580,16 +763,20 @@ const Engine = (() => {
         p.target = p.supportTarget;
         p.action = 'support';
       } else { p.target = base; p.action = 'position'; }
-      p.urgency = dist(p.pos, p.target) > 8 ? 0.85 : 0.6;
+      // a forward caught well short of the front line in the final third gets back up there quickly
+      const far = dist(p.pos, p.target), fwdCatch = far > 8 && this.toU(p.team, b.pos.x) > 0.55 && this.toU(p.team, p.target.x) > this.toU(p.team, p.pos.x) + 0.05;
+      p.urgency = fwdCatch ? 0.95 : far > 8 ? 0.85 : 0.6;
     }
     supportSpot(p, base, carrier) {
-      const opps = this.teamOn(1 - p.team), maxU = this.oppLine[p.team] + 0.01, k = Math.max(0.6, this.cfg.k);
-      let best = base, bestS = -Infinity;
-      const scan = (this.raw(p, 'vision') > 75 ? 1.5 : 1) * k;
-      for (const [dx0, dy0] of SUPPORT) {
-        const dx = dx0 * scan, dy = dy0 * scan;
-        let c = this.clampPitch({ x: base.x + dx, y: base.y + dy });
-        if (this.toU(p.team, c.x) > maxU) c = this.fromUV(p.team, maxU, this.toV(p.team, c.y));
+      const opps = this.teamOn(1 - p.team), k = Math.max(0.6, this.cfg.k);
+      // stay onside: level with the last defender at most, unless the ball is further upfield
+      const maxU = Math.max(this.oppLine[p.team] - 0.005, this.toU(p.team, carrier.pos.x) - 0.01);
+      const baseU = this.toU(p.team, base.x), sp = this.slotFor(p, true).pos;
+      // a wide role keeps its width: leaving the touchline costs extra
+      const holdWidth = (sp === 'LW' || sp === 'RW' || sp === 'LM' || sp === 'RM') && p.rIP.attack.dv <= 0.08 ? 0.45 : 0;
+      // free roles look further afield for space
+      const scan = (this.raw(p, 'vision') > 75 ? 1.5 : 1) * Math.min(1.5, p.rIP.roam || 1) * k;
+      const score = c => {
         const space = Math.min(8, this.nearestDist(c, opps));
         let lane = 6;
         for (const o of opps) {
@@ -597,10 +784,35 @@ const Engine = (() => {
           if (t > 0.05 && t < 0.98) lane = Math.min(lane, d);
         }
         const tooClose = dist(c, carrier.pos) < 6 * k ? 3 : 0;
-        const s = space * 0.6 + lane * 0.7 - dist(c, base) * 0.22 - tooClose + (this.toU(p.team, c.x) - this.toU(p.team, base.x)) * 6;
+        const du = this.toU(p.team, c.x) - baseU;
+        return space * 0.6 + lane * 0.7 - dist(c, base) * 0.22 - tooClose + du * 6 + (p.rIP.boxStay && du < 0 ? du * 12 : 0) - holdWidth * Math.abs(c.y - base.y);
+      };
+      let best = base, bestS = -Infinity;
+      for (const [dx0, dy0] of SUPPORT) {
+        let c = this.clampPitch({ x: base.x + dx0 * scan, y: base.y + dy0 * scan });
+        if (this.toU(p.team, c.x) > maxU) c = this.fromUV(p.team, maxU, this.toV(p.team, c.y));
+        const s = score(c);
         if (s > bestS) { bestS = s; best = c; }
       }
+      // hysteresis: keep the current spot unless the new one is clearly better
+      const cur = p.supportTarget;
+      if (cur && cur !== base && dist(cur, base) < 12 * k && this.toU(p.team, cur.x) <= maxU + 0.002 && score(cur) + 1.2 >= bestS) return cur;
       return best;
+    }
+    // is the carrier in a position to release a runner: facing forward, not swamped, with a lane to the run
+    runReady(p) {
+      const b = this.ball, c = b.owner !== null ? this.players[b.owner] : null;
+      if (!c || c.team !== p.team || !p.runTarget) return false;
+      const early = () => this.rng.chance((1 - this.attr(p, 'positioning') / 99) * 0.1); // poor readers go too soon
+      if (this.time - c.gotBallAt < 0.25) return early();
+      const facing = Math.cos(c.ang - (p.team === 0 ? 0 : Math.PI));
+      if (facing < 0.25 || this.pressureOn(c) > 0.9) return early();
+      for (const o of this.onPitch) {
+        if (o.team === p.team || o.isGK || o.down > 0) continue;
+        const { d, t } = this.segDist(o.pos, c.pos, p.runTarget);
+        if (t > 0.1 && t < 0.85 && d < 1.2) return early();
+      }
+      return true;
     }
     thinkDefending(p, base) {
       const b = this.ball;
@@ -615,9 +827,15 @@ const Engine = (() => {
       }
       if (this.blocker === p.id) { p.target = this.blockPoint; p.urgency = 1; p.action = 'block'; return; }
       p.target = this.markAdjust(p, base);
-      const man = this.marks.get(p.id);
-      const beaten = man !== undefined && this.toU(p.team, this.players[man].pos.x) < this.toU(p.team, p.pos.x) + 0.02;
-      p.urgency = beaten || dist(p.pos, p.target) > 6 ? 1 : 0.7;
+      const man = this.marks.get(p.id), m = man !== undefined ? this.players[man] : null;
+      // flat out only when the man has actually got goal-side, or is sprinting in behind level with them; otherwise jockey
+      const pu = this.toU(p.team, p.pos.x);
+      const mu = m ? this.toU(p.team, m.pos.x) : 1, goalward = m ? -(p.team === 0 ? m.vel.x : -m.vel.x) : 0;
+      const beaten = m && (mu < pu - 0.005 || (goalward > 4.5 && mu < pu + 0.015));
+      const d = dist(p.pos, p.target), k = this.cfg.k;
+      p.urgency = beaten ? 1 : d > 12 * k ? 0.9 : d > 6 * k ? 0.82 : 0.7;
+      // the back line moves as one: a defender out of step with its depth hurries to get back in line
+      if (!beaten && this.zoneOf(p) === 'def' && Math.abs(pu - this.toU(p.team, p.target.x)) * this.cfg.L > 1.5 * k) p.urgency = Math.max(p.urgency, 0.92);
       p.action = 'mark';
     }
     thinkShotBlock(p) {
@@ -631,22 +849,29 @@ const Engine = (() => {
     }
     maybeStartRun(p, target, ti) {
       const u = this.toU(p.team, target.x);
-      if (u < 0.35) return;
+      // wide centre-backs overlap from deeper than anyone else
+      if (u < (p.rIP.runFrom || 0.35)) return;
       const counter = this.inTransition(p.team) ? 3 : 1;
       const carrier = this.players[this.ball.owner];
       const time = 1 - 0.6 * Math.min(1, this.pressureOn(carrier));
-      const perSec = 0.14 * p.rIP.w.run * (1 + 0.5 * p.instr.runs) * (1 + 0.25 * ti.mentality) * (1 + 0.8 * ti.directness) * counter * time;
+      const legs = 0.4 + 0.6 * p.stamina;
+      const perSec = 0.14 * p.rIP.w.run * (1 + 0.5 * p.instr.runs) * (1 + 0.25 * ti.mentality) * (1 + 0.8 * ti.directness) * counter * time * legs;
       if (perSec <= 0 || !this.rng.chance(perSec * TICK)) return;
-      const line = this.oppLine[p.team], v = this.toV(p.team, target.y);
-      const gapV = this.findGap(p.team, v + (0.5 - v) * (p.rIP.w.shoot > 1.2 ? 0.5 : 0.1));
+      const line = this.oppLine[p.team], v = this.toV(p.team, target.y), q = this.attr(p, 'positioning') / 99;
+      let gapV = this.findGap(p.team, v + (0.5 - v) * (p.rIP.w.shoot > 1.2 ? 0.5 : 0.1), q);
+      // a touchline role runs down its own channel rather than into the middle
+      const sp = this.slotFor(p, true).pos;
+      if ((sp === 'LW' || sp === 'RW' || sp === 'LM' || sp === 'RM') && p.rIP.attack.dv <= 0.08) gapV = v + (gapV - v) * 0.3;
       const behind = u > line - 0.12;
       const runU = behind ? Math.min(line + this.rng.range(0.05, 0.12), 0.95) : Math.min(u + 0.2, line - 0.02);
       if (runU < u + 0.04) return;
       p.runTarget = this.fromUV(p.team, runU, gapV);
-      p.runTimer = this.rng.range(1.8, 2.8);
+      // a run beyond the line waits (onside) for the release; one into space short of it just goes
+      p.runGo = !behind;
+      p.runTimer = behind ? this.rng.range(2.2, 3.4) : this.rng.range(1.8, 2.8);
       if (this.raw(p, 'accel') > 78 && this.rng.chance(0.35)) p.burstUntil = this.time + 2.5;
     }
-    findGap(t, v) {
+    findGap(t, v, q = 0.6) {
       const line = this.oppLine[t];
       const vs = this.onPitch.filter(o => o.team !== t && !o.isGK && this.toU(t, o.pos.x) > line - 0.12).map(o => this.toV(t, o.pos.y));
       vs.push(0.06, 0.94);
@@ -656,7 +881,8 @@ const Engine = (() => {
         const w = vs[i] - vs[i - 1];
         if (w < 0.08) continue;
         const mid = (vs[i] + vs[i - 1]) / 2;
-        const s = Math.min(w, 0.3) - Math.abs(mid - v) * 0.9;
+        // a sharper reader of the game values the size of the gap over its convenience
+        const s = Math.min(w, 0.3) * (0.6 + 0.8 * q) - Math.abs(mid - v) * 0.9;
         if (s > bestS) { bestS = s; best = mid; }
       }
       return clamp(best, 0.08, 0.92);
@@ -664,7 +890,7 @@ const Engine = (() => {
     markAdjust(p, base) {
       const b = this.ball;
       const ballPos = b.owner !== null ? this.players[b.owner].pos : b.pos;
-      const zone = this.zoneOf(p), roam = p.rOOP.roam || 1, positioning = this.attr(p, 'positioning') / 99;
+      const zone = this.zoneOf(p), roam = this.defRoam(p), positioning = this.attr(p, 'positioning') / 99;
       const manId = this.marks.get(p.id);
       let spot, leash;
       if (manId !== undefined) {
@@ -679,7 +905,9 @@ const Engine = (() => {
         const near = this.toU(p.team, m.pos.x) < 0.38 ? 0.3 : 0;
         const tight = clamp(0.6 + near - 0.06 * this.tac(p.team).team.mentality, 0.35, 1);
         spot = add(base, scale(sub(spot, base), tight));
-        leash = (zone === 'def' ? 30 : zone === 'mid' ? 13 * roam : 6 * roam) * Math.max(0.6, this.cfg.k) * (1 - 0.22 * (p.instr.runs || 0));
+        // a defender marks from the inside shoulder: only part of the way out toward a man drifting wide
+        if (zone === 'def' && Math.abs(m.pos.y - this.cfg.W / 2) > Math.abs(base.y - this.cfg.W / 2)) spot.y = base.y + (spot.y - base.y) * 0.7;
+        leash = (zone === 'def' ? 12 : zone === 'mid' ? 13 * roam : 6 * roam) * Math.max(0.6, this.cfg.k) * (1 - 0.22 * (p.instr.runs || 0));
       } else {
         let sum = base, wsum = 1;
         for (const a of this.onPitch) {
@@ -696,7 +924,17 @@ const Engine = (() => {
       let off = sub(spot, base);
       const l = len(off);
       if (l > leash) off = scale(off, leash / l);
-      return add(base, off);
+      let out = add(base, off);
+      // the back line stays flat: within a few metres of its depth, unless defending the box, tracking a man who
+      // has got in behind it, or a stopper stepping out
+      if (zone === 'def' && this.defLineU && p.rOOP.id !== 'stp' && !this.inAttackingBox(1 - p.team, out)) {
+        const c = this.cfg, line = this.defLineU[p.team], band = (3 * c.k) / c.L;
+        let lo = line - band;
+        if (manId !== undefined) lo = Math.min(lo, this.toU(p.team, this.players[manId].pos.x) - 0.01);
+        const u = clamp(this.toU(p.team, out.x), lo, line + band);
+        out = this.fromUV(p.team, u, this.toV(p.team, out.y));
+      }
+      return out;
     }
     thinkKeeper(p) {
       const b = this.ball, c = this.cfg;
@@ -775,57 +1013,93 @@ const Engine = (() => {
       const goal = this.attackGoal(t), pressure = this.pressureOn(p), k = this.cfg.k;
       const opts = [];
       const myU = this.toU(t, p.pos.x), here = this.threat(t, p.pos), w = p.rIP.w;
+      this.countTakeOn(p);
       const counter = this.inTransition(t) ? 0.3 * (1 - 0.15 * ti.mentality) : 0;
       const stale = clamp((this.time - this.possStart[t] - 10) / 15, 0, 1) * (myU < 0.5 ? 0.3 : 0.12);
-      const push = clamp(0.07 * ti.mentality + counter + stale, -0.3, 0.6);
-      const forwardBias = to => 1 + push * Math.sign(this.toU(t, to.x) - myU);
+      const push = clamp(0.05 * ti.mentality + 0.7 * counter + 1.2 * stale, -0.3, 0.5);
+      // a gentle lean toward goal, scaled by how far forward the ball goes (not a flat bonus for any forward ball)
+      const forwardBias = to => 1 + push * clamp((this.toU(t, to.x) - myU) * 5, -1, 1);
       const flair = this.flair(p);
+      const throwIn = !!p.throwIn;
+      const direct = ti.directness - 0.25 * Math.min(0, ti.mentality);
+      // keeping the ball is worth something in itself: possession sides value it more, counters less
+      // (and less as a move goes stale: sterile circulation has to end in something)
+      const retain = 0.24 * (1 - 2.2 * stale) * (1 - 0.2 * direct) * (1 - counter);
+      const offLine = this.offsideLineU(t), freeKick = this.freeRestart === p.id;
 
       // clear it: under pressure deep in his own half, a defender just gets rid
       if (!p.mustPass && myU < 0.3 && pressure > 0.55 && !p.isGK) {
         const danger = (0.3 - myU) * 3 + (pressure - 0.55);
         opts.push({ score: danger * 0.9 * (1.2 - this.attr(p, 'composure') / 99) * (p.rIP.w.direct || 1), run: () => this.clear(p) });
       }
-      // shoot
+      // shoot: no hard range gate, but every metre beyond ~18 costs (more patience for poor/long shooters)
       const dGoal = dist(p.pos, goal);
-      if (dGoal < (28 + 4 * (flair - 1)) * k && !p.mustPass) {
-        const xg = this.shotXg(p, pressure, false);
+      if (dGoal < 38 * k && !p.mustPass && !throwIn) {
+        const crowd = this.congestion(p);
+        const xg = this.shotXg(p, pressure, false, crowd);
         const skid = dGoal > 16 * k ? 1 + this.weather.slick : 1;
-        const s = xg * Math.pow(0.6, this.blockers(p)) * 11 * skid * w.shoot * (1 + 0.35 * p.instr.shoot) * (1 + 0.05 * ti.mentality) * (side.blitz ? 1.15 : 1);
+        const longShot = 1 + 0.25 * (flair - 1) + 0.2 * p.instr.shoot + 0.3 * (w.shoot - 1) + 0.25 * (this.attr(p, 'finishing') / 99 - 0.7);
+        const kr = Math.max(k, 0.75); // small-sided: a short pitch but the same legs, so shooting range shrinks less
+        const far = Math.exp(-Math.max(0, dGoal - 18 * kr) / (8.5 * kr * Math.max(0.5, longShot)));
+        const s = xg * Math.pow(0.65, this.blockers(p)) * 34 * far * skid * w.shoot * (1 + 0.35 * p.instr.shoot) * (1 + 0.05 * ti.mentality) * (side.blitz ? 1.15 : 1);
         opts.push({ score: s, run: () => this.shoot(p, xg, false) });
       }
 
       // pass: to feet, into space, or to a runner; on the ground or in the air
-      const skill = this.attr(p, 'passing') / 99, vision = this.attr(p, 'vision') / 99;
-      const direct = ti.directness - 0.25 * Math.min(0, ti.mentality);
+      const skill = this.attr(p, 'passing') / 99, vision = this.attr(p, 'vision') / 99, composure = this.attr(p, 'composure') / 99;
+      const throwMax = (12 + (18 * this.raw(p, 'strength')) / 99) * Math.max(0.6, k);
+      const myV = this.toV(t, p.pos.y);
       for (const m of mates) {
-        if (m.isGK && pressure < 0.5) continue;
+        // the keeper is an outlet from deep, not a target from midfield
+        if (m.isGK && (myU > 0.42 || throwIn || (pressure < 0.35 && myU > 0.2))) continue;
+        // a team-mate standing offside: the passer sees the flag coming (mostly)
+        const offM = !freeKick && !throwIn && this.offsideSeen(m, p.pos.x, offLine, vision);
         const aims = [this.aimClamp(t, add(m.pos, scale(m.vel, 0.35)))];
+        const dv = Math.abs(this.toV(t, m.pos.y) - myV);
         if (!m.isGK) {
           const toGoal = norm(sub(goal, m.pos)), sp = len(m.vel);
           const lead = norm(add(toGoal, sp > 1 ? scale(m.vel, 0.6 / sp) : vec()));
           aims.push(this.aimClamp(t, add(m.pos, scale(lead, 5 * k))), this.aimClamp(t, add(m.pos, scale(lead, 10 * k))));
           if (m.action === 'run' && m.runTarget) aims.push(this.aimClamp(t, m.runTarget));
         }
+        const range = throwIn ? throwMax : (25 + 40 * vision) * this.weather.visibility * Math.max(0.6, k);
+        // the hub roles want it, the wide men are the outlet for a switch, the big men for a lofted ball
+        const hub = (1 + 0.35 * (m.rIP.w.pass - 1)) * (m.rIP.free ? 1.08 : 1);
+        const wideOut = m.rIP.w.cross >= 1.3 || m.rIP.id === 'wtm' ? 1 : 0;
+        const aerialT = 0.35 * (m.rIP.w.aerial - 1) + (m.rIP.holdUp ? 0.12 : 0) + 0.3 * (this.attr(m, 'heading') / 99 - 0.6);
         for (const aim of aims) {
           const d = dist(p.pos, aim);
-          if (d < 4 * k || d > (20 + 35 * vision) * this.weather.visibility * Math.max(0.6, k)) continue;
-          for (const lofted of [false, true]) {
-            if (lofted ? d < 15 * k : d > 32) continue;
+          if (d < (throwIn ? 3 : 4 * k) || d > range) continue;
+          for (const lofted of throwIn ? [d > 9 * Math.max(0.6, k)] : [false, true]) {
+            if (!throwIn && (lofted ? d < 15 * k : d > 32)) continue;
             const ambitious = aim !== aims[0];
             if (ambitious && this.rng.next() > 0.35 + 0.65 * vision) continue;
             const canCurl = !lofted && this.raw(p, 'curve') * w.curl > 70;
             const risk = this.passRisk(p.pos, aim, m, lofted, opps) * (canCurl ? 0.8 : 1) * (side.passBonus > 1 && !lofted ? 0.85 : 1);
-            const acc = 1 - clamp((d / 30) * (1 - skill) * (lofted ? 1.3 : 1) + pressure * 0.12, 0, 0.6);
-            let pOk = (1 - risk) * acc * (!lofted && d < 22 && ti.directness < 0 ? 1.1 : 1);
+            // everyone thinks they can pass: the range judgement is pulled toward an average player's
+            const acc = 1 - clamp((d / (lofted ? 42 : 30)) * (1 - (0.4 * skill + 0.6 * 0.72)) * (lofted ? 1.2 : 1), 0, 0.6);
+            // calibrated against outcomes: the lane model is optimistic, and a man in your face costs more than it says
+            const fail = clamp(1.5 * risk + 0.24 * Math.min(1, pressure) * (1.2 - composure) + 0.04, 0, 0.95);
+            let pOk = (1 - fail) * acc * (!lofted && d < 22 && ti.directness < 0 ? 1.1 : 1);
             pOk = Math.pow(pOk, 1 - 0.15 * ti.mentality);
-            const gain = pOk * this.threat(t, aim) - (1 - pOk) * 0.35 * this.threat(opp, aim);
+            if (offM) pOk *= 0.1 + 0.3 * (1 - vision);
+            const near = this.nearestDist(aim, opps), aimT = this.threat(t, aim), space = clamp(near / 8, 0, 1);
+            // a ball in the air hangs: anyone close to the drop zone contests it
+            if (lofted && !throwIn) pOk *= 0.88 * (near < 3 ? 0.7 + 0.1 * near : 1);
+            const gain = pOk * (aimT + retain * (0.7 + 0.3 * space) + (m.isGK ? -0.05 : 0)) - (1 - pOk) * 0.35 * this.threat(opp, aim);
             let bypassed = 0;
             const aimU = this.toU(t, aim.x);
             for (const o of opps) { const ou = this.toU(t, o.pos.x); if (ou > myU && ou < aimU) bypassed++; }
             const style = lofted || d > 26 ? (0.84 + 0.16 * direct) * w.direct : 1 - 0.05 * direct;
+            let rb = lofted ? 1 + aerialT : hub;
+            // the poacher lives in the box: find him there
+            if (m.rIP.boxStay && this.inAttackingBox(t, aim)) rb *= 1.15;
+            // straight back to whoever just gave it to you, unpressed and not forward: sterile ping-pong
+            if (m.id === p.receivedFrom && this.time - p.receivedAt < 4 && pressure < 0.5 && aimU <= myU + 0.02) rb *= 0.6;
+            // switch of play: a long diagonal into a wide man in space on the far side
+            if (lofted && d > 25 * k && dv > 0.35) rb *= 1 + 0.12 + 0.2 * wideOut + 0.2 * space;
             // possession sides are patient but always probing: line-breaking short passes are what they live for
-            const s = (gain + 0.025 * bypassed * pOk) * style * w.pass * forwardBias(aim) * (side.passBonus || 1);
+            const s = (gain + 0.025 * bypassed * pOk) * style * w.pass * forwardBias(aim) * (side.passBonus || 1) * rb;
             opts.push({ score: s, run: () => this.pass(p, m, aim, lofted, false) });
           }
         }
@@ -833,31 +1107,81 @@ const Engine = (() => {
 
       // cross into the zones the runners are attacking
       const v = this.toV(t, p.pos.y);
-      if (myU > 0.72 && this.inCrossingZone(t, v)) {
+      if (myU > 0.72 && this.inCrossingZone(t, v) && !throwIn) {
         const crossing = this.attr(p, 'crossing') / 99;
+        const kp = this.keeper(opp);
         for (const [id, zone] of this.boxRuns) {
           const att = this.players[id];
-          if (att.team !== t) continue;
+          if (att.team !== t || att.down > 0) continue;
+          // only worth it if the runner gets there with the ball
+          const dc = dist(p.pos, zone), tf = travelTime(dc, kickSpeed(dc, true), AIR_K);
+          const late = Math.max(0, dist(att.pos, zone) - 1.5) / this.maxSpeed(att) - tf;
+          if (late > 0.5) continue;
+          const timing = clamp(1 - Math.max(0, late) / 0.6, 0.15, 1);
           let def = null;
           for (const o of opps) { if (o.isGK || dist(o.pos, zone) > 3.5) continue; if (!def || this.aerialScore(o) > this.aerialScore(def)) def = o; }
           const pWin = def ? clamp(0.5 + (this.aerialScore(att) - this.aerialScore(def)) / 99, 0.15, 0.85) : 0.85;
           const xgH = this.angleXg(t, zone) * 0.6 * (0.6 + (0.8 * this.attr(att, 'heading')) / 99);
-          const delivery = 0.55 + 0.4 * crossing - 0.15 * Math.min(1, pressure);
-          const s = delivery * pWin * (xgH * 6 + 0.25) * w.cross * (1 + 0.6 * ti.width) * (side.crossBonus || 1);
+          const delivery = 0.3 + 0.7 * crossing - 0.15 * Math.min(1, pressure);
+          // a keeper camped near the drop zone comes and claims it
+          const gkThreat = kp ? clamp(1 - dist(kp.pos, zone) / 9, 0, 0.6) : 0;
+          const offA = !freeKick && this.offsideSeen(att, p.pos.x, offLine, vision);
+          const s = delivery * timing * pWin * (1 - gkThreat) * (xgH * 6 + 0.25) * w.cross * (1 + 0.6 * ti.width) * (side.crossBonus || 1) * (offA ? 0.15 : 1);
           opts.push({ score: s, run: () => this.pass(p, att, zone, true, true) });
+        }
+      }
+      // from the byline: a low driven ball across the six-yard box, or a cut-back to the penalty spot / edge
+      if (myU > 0.8 && Math.abs(v - 0.5) > 0.12 && !throwIn) {
+        const c = this.cfg, crossing = this.attr(p, 'crossing') / 99, sgn = Math.sign(v - 0.5);
+        const lowAims = [
+          this.fromUV(t, 1 - (c.PEN + 0.5 * k) / c.L, 0.5 + sgn * 0.02),
+          this.fromUV(t, 1 - (c.BOX_D + 1.5 * k) / c.L, 0.5 + sgn * 0.06),
+          this.fromUV(t, 1 - 5 / c.L, 0.5 + sgn * 0.035),
+          this.fromUV(t, 1 - 5 / c.L, 0.5 - sgn * 0.05),
+        ].map(a => this.aimClamp(t, a));
+        for (const aim of lowAims) {
+          const d = dist(p.pos, aim);
+          if (d < 5 * k || d > 30) continue;
+          const tb = travelTime(d, kickSpeed(d, false, this.groundK, this.weather.arrive), this.groundK);
+          let best = null, bt = Infinity;
+          for (const m of mates) {
+            if (m.isGK || (!freeKick && this.offsidePos(m, p.pos.x, offLine))) continue;
+            const tr = Math.max(0, dist(m.pos, aim) - 1) / this.maxSpeed(m);
+            if (tr < bt) { bt = tr; best = m; }
+          }
+          if (!best || bt > tb + 0.5) continue;
+          const pOk = (1 - this.passRisk(p.pos, aim, best, false, opps)) * (0.5 + 0.5 * crossing) * (1 - 0.2 * Math.min(1, pressure));
+          const xgL = this.angleXg(t, aim) * (0.6 + (0.6 * this.attr(best, 'finishing')) / 99);
+          const s = pOk * (xgL * 5 + 0.25) * (0.6 + 0.4 * w.cross) * (side.crossBonus || 1);
+          opts.push({ score: s, run: () => this.pass(p, best, aim, false, true) });
         }
       }
 
       if (!p.mustPass) {
         const fwd = norm(sub(goal, p.pos)), dribbling = this.attr(p, 'dribbling') / 99;
         const reach = 7 * Math.max(0.7, k);
-        for (const ang of [0, 0.6, -0.6, 1.2, -1.2]) {
-          const ahead = this.clampPitch(add(p.pos, scale(rot(fwd, ang), reach)));
+        // carries: forward, diagonal, lateral and turning back out of trouble
+        for (const ang of [0, 0.6, -0.6, 1.2, -1.2, 1.9, -1.9]) {
+          const ahead = this.clampPitch(add(p.pos, scale(rot(fwd, ang), reach * (Math.abs(ang) > 1.5 ? 0.7 : 1))));
           const space = this.nearestDist(ahead, opps);
-          const pKeep = clamp(space / 9, 0.1, 1) * (0.45 + 0.55 * dribbling) * (1 - 0.45 * Math.min(1, pressure));
-          let s = (pKeep * this.threat(t, ahead) - (1 - pKeep) * 0.25 * this.threat(opp, p.pos)) * w.dribble * forwardBias(ahead);
+          // defenders standing in the path itself, not just at the end of it
+          let path = 9;
+          for (const o of opps) { if (o.down > 0.3) continue; const sd = this.segDist(o.pos, p.pos, ahead); if (sd.t > 0.05) path = Math.min(path, sd.d); }
+          const pKeep = clamp(space / 9, 0.1, 1) * clamp(0.3 + path / 3.5, 0.3, 1) * (0.45 + 0.55 * dribbling) * (1 - 0.45 * Math.min(1, pressure));
+          // even a stay-at-home defender steps into open grass when nobody comes to him
+          // (ball-playing / wide centre-backs are built to carry it out)
+          const wd = (p.rIP.carry && Math.abs(ang) < 0.7 && myU < 0.6 ? Math.max(w.dribble, 0.95) : w.dribble) + Math.max(0, 1 - w.dribble) * (Math.abs(ang) < 0.7 ? clamp((space - 6) / 10, 0, 0.6) * (1 - Math.min(1, pressure)) : 0);
+          let s = (pKeep * (this.threat(t, ahead) + 0.9 * retain) - (1 - pKeep) * 0.25 * this.threat(opp, p.pos)) * wd * forwardBias(ahead);
           if (p.isGK) s *= 0.05;
           opts.push({ score: s, run: () => this.startDribble(p, ahead) });
+        }
+        // under pressure: shield it, back to the marker, and wait for help
+        if (pressure > 0.4 && !p.isGK) {
+          const shield = this.clampPitch(add(p.pos, scale(fwd, -2.2)));
+          const str = this.attr(p, 'strength') / 99, holdUpRole = p.rIP.holdUp ? 1 : 0;
+          const pKeep = clamp(0.25 + 0.45 * str + 0.2 * dribbling + 0.15 * holdUpRole - 0.25 * Math.min(1, pressure), 0.1, 0.9);
+          const s = (pKeep * (here + retain) * (0.55 + 0.35 * holdUpRole) - (1 - pKeep) * 0.25 * this.threat(opp, p.pos)) * (1 - stale);
+          opts.push({ score: s, run: () => { this.startDribble(p, shield); p.decisionCd = 0.45; } });
         }
         // cut inside from the flank toward the edge of the box (inside forwards, inverted wingers, flair players)
         if ((p.rIP.id === 'if' || p.rIP.id === 'iw' || p.rIP.id === 'rau' || p.pers === 'flair') && myU > 0.6 && Math.abs(v - 0.5) > 0.18) {
@@ -869,9 +1193,15 @@ const Engine = (() => {
         }
         const holdUp = p.rIP.holdUp && myU > 0.5;
         opts.push({
-          score: here * (holdUp ? 0.75 : pressure < 0.3 ? 0.7 : 0.3) * (1 - 0.15 * ti.tempo) * (1 - counter - stale) * clamp(1 - (this.time - p.gotBallAt - 1) / (holdUp ? 4 : 2.5), 0, 1),
+          score: (here + 0.6 * retain) * (holdUp ? 0.75 : pressure < 0.3 ? 0.7 : 0.3) * (1 - 0.15 * ti.tempo) * (1 - counter - stale) * clamp(1 - (this.time - p.gotBallAt - 1) / (holdUp ? 4 : 2.5), 0, 1),
           run: () => { p.action = 'hold'; p.decisionCd = 0.35 - 0.1 * ti.tempo; },
         });
+      }
+      if (!opts.length && throwIn && mates.length) {
+        // nobody in range: lob it to the nearest team-mate's area
+        const nm = mates.reduce((a, c) => (dist(c.pos, p.pos) < dist(a.pos, p.pos) ? c : a));
+        const aim = this.aimClamp(t, add(p.pos, scale(norm(sub(nm.pos, p.pos)), Math.min(throwMax, dist(nm.pos, p.pos)))));
+        opts.push({ score: 0, run: () => this.pass(p, nm, aim, dist(p.pos, aim) > 9) });
       }
       if (!opts.length) { p.decisionCd = 0.3; return; }
       const noise = 0.15 - 0.12 * vision + 0.15 * Math.min(1, pressure) * (1 - this.attr(p, 'composure') / 99);
@@ -884,11 +1214,32 @@ const Engine = (() => {
       best.run();
     }
 
+    countTakeOn(p) {
+      const to = p.takeOn;
+      if (!to) return;
+      if (this.time > to.until || this.ball.owner !== p.id) { p.takeOn = null; return; }
+      const o = this.players[to.id];
+      if (this.toU(p.team, o.pos.x) < this.toU(p.team, p.pos.x) - 0.8 / this.cfg.L || o.down > 0) {
+        p.takeOn = null;
+        this.stats[p.team].takeOns++;
+        p.ps.takeOns++;
+      }
+    }
     startDribble(p, target) {
       p.dribbleTarget = target;
       p.action = 'dribble';
       p.decisionCd = 0.55 - 0.2 * this.tac(p.team).team.tempo;
       p.ps.dribbles++;
+      // squaring up a defender in the path: if he ends up behind us with the ball still ours, that's a take-on
+      if (!p.takeOn || this.time > p.takeOn.until) {
+        p.takeOn = null;
+        const myU = this.toU(p.team, p.pos.x);
+        for (const o of this.onPitch) {
+          if (o.team === p.team || o.isGK || o.down > 0) continue;
+          const sd = this.segDist(o.pos, p.pos, target);
+          if (sd.d < 2.2 && this.toU(p.team, o.pos.x) > myU && dist(o.pos, p.pos) < 4) { p.takeOn = { id: o.id, until: this.time + 2.5 }; break; }
+        }
+      }
       if (this.inTransition(p.team) && this.raw(p, 'accel') > 75 && this.nearestDist(target, this.teamOn(1 - p.team)) > 6) p.burstUntil = this.time + 2.5;
     }
 
@@ -902,16 +1253,20 @@ const Engine = (() => {
       } else b.vz = 0;
       b.z = Math.max(b.z, 0.05);
       b.spin = (this.rng.next() - 0.5) * 30;
+      b.gkTried = false;
     }
 
     pass(p, m, aim, lofted, cross) {
       const b = this.ball;
+      this.markOffside(p);
+      if (p.throwIn) return this.throwBall(p, m, aim, lofted);
+      if (cross && lofted && this.crossBlocked(p, aim)) return;
       const skill = this.attr(p, cross ? 'crossing' : 'passing') / 99, pressure = this.pressureOn(p), d = dist(p.pos, aim);
       const curveSkill = this.attr(p, 'curve') / 99 * p.rIP.w.curl * this.flair(p);
       const precise = !cross && d > 12 && this.toU(p.team, aim.x) > this.toU(p.team, m.pos.x) + 0.02 && this.rng.chance(clamp((this.attr(p, 'vision') - 70) / 60, 0, 0.4));
       const blocker = !cross && !lofted && d > 8 ? this.laneBlocker(p, aim) : null;
       const curl = (blocker !== null && this.rng.chance(clamp(curveSkill - 0.35, 0, 0.85))) || (cross && this.rng.chance(clamp(curveSkill - 0.2, 0.15, 0.9)));
-      const err = (0.012 + (1 - skill) * 0.1 + pressure * 0.07 * (1.3 - (0.6 * this.attr(p, 'composure')) / 99)) * (lofted ? 1.3 : 1) * this.weather.passErr * (precise || curl ? 0.45 : 1) * (this.teams[p.team].passBonus > 1 ? 0.8 : 1) * (!lofted && d < 22 && this.tac(p.team).team.directness < 0 ? 0.8 : 1);
+      const err = (0.01 + (1 - skill) * (cross ? 0.17 : 0.16) + pressure * 0.07 * (1.3 - (0.6 * this.attr(p, 'composure')) / 99)) * (lofted ? 1.3 : 1) * this.weather.passErr * (precise || curl ? 0.45 : 1) * (this.teams[p.team].passBonus > 1 ? 0.8 : 1) * (!lofted && d < 22 && this.tac(p.team).team.directness < 0 ? 0.8 : 1);
       let dir = rot(norm(sub(aim, p.pos)), this.rng.gauss() * err);
       let dErr = Math.max(3, d * (1 + this.rng.gauss() * err * 0.7));
       // the shank: under pressure a poor passer sometimes slices it badly
@@ -938,6 +1293,7 @@ const Engine = (() => {
       b.lofted = lofted; b.loftFrom = { ...p.pos }; b.loftDist = dErr * arc; b.cross = cross;
       b.crossQuality = cross ? Math.min(1, skill + (curl ? 0.15 : 0)) : 0;
       b.threaded = precise || (curl && !cross);
+      b.handOk = false;
       b.lastTeam = p.team; b.power = 0;
       this.stats[p.team].passes++;
       p.ps.passes++;
@@ -948,17 +1304,79 @@ const Engine = (() => {
       this.effect('pass', p.pos, p.team, { tx: aim.x, ty: aim.y, curve: curve || 0, lofted });
       if (curl && !cross && d > 15) this.effect('special', p.pos, p.team, { label: 'Curler', pid: p.data.id });
     }
+    // the full-back gets in the way of the cross: off his shin, often behind for a corner
+    crossBlocked(p, aim) {
+      const b = this.ball, c = this.cfg, dir = norm(sub(aim, p.pos));
+      let o = null;
+      for (const q of this.onPitch) {
+        if (q.team === p.team || q.isGK || q.down > 0) continue;
+        const rel = sub(q.pos, p.pos), d = len(rel);
+        if (d < 2.4 && dot(rel, dir) > 0.3 * d && (!o || d < dist(o.pos, p.pos))) o = q;
+      }
+      if (!o || !this.rng.chance(clamp(0.42 - 0.32 * (this.attr(p, 'crossing') / 99), 0.08, 0.32))) return false;
+      this.stats[p.team].passes++; this.stats[p.team].crosses++; p.ps.passes++;
+      this.stats[o.team].blocks++; o.ps.blocks++;
+      const nearLine = this.toU(p.team, p.pos.x) > 0.78;
+      const behind = vec(p.team === 0 ? c.L + 2 : -2, clamp(p.pos.y + this.rng.range(-4, 4), 1, c.W - 1));
+      b.owner = null;
+      b.vel = nearLine && this.rng.chance(0.7) ? this.deflectVel(o.pos, behind) : scale(rot(scale(dir, -1), this.rng.range(-1.2, 1.2)), this.rng.range(4, 9));
+      b.pos = { ...o.pos }; b.z = 0.4; b.vz = this.rng.range(1, 4);
+      b.receiver = null; b.passer = null; b.fumbler = o.id; b.noTouchTimer = 0.3; b.lastTeam = o.team;
+      b.lofted = false; b.cross = false; b.curl = 0; b.shot = null; b.power = 0;
+      p.action = 'position'; p.decisionCd = 0.5;
+      this.effect('block', o.pos, o.team, { pid: o.data.id });
+      return true;
+    }
+    // a throw-in: out of the hands, a looping lob (or a short one to feet); strength sets the range
+    throwBall(p, m, aim, lofted) {
+      const b = this.ball;
+      p.throwIn = false;
+      const maxD = (12 + (18 * this.raw(p, 'strength')) / 99) * Math.max(0.6, this.cfg.k);
+      const d = Math.min(dist(p.pos, aim), maxD);
+      const err = 0.03 + (1 - this.attr(p, 'passing') / 99) * 0.06 + this.pressureOn(p) * 0.03;
+      const dir = rot(norm(sub(aim, p.pos)), this.rng.gauss() * err);
+      const dErr = Math.max(2.5, d * (1 + this.rng.gauss() * err * 0.6));
+      b.owner = null;
+      if (lofted) {
+        const speed = Math.min(17, AIR_K * dErr + 9);
+        this.launch(dir, speed, true, dErr);
+      } else {
+        b.vel = scale(dir, Math.min(13, this.groundK * dErr + 4)); b.vz = 1;
+      }
+      b.z = 1.7; b.spin = 0;
+      b.receiver = m.id; b.fumbler = null; b.passer = p.id; b.noTouchTimer = 0.3;
+      b.lofted = lofted; b.loftFrom = { ...p.pos }; b.loftDist = dErr; b.cross = false; b.crossQuality = 0; b.threaded = false;
+      b.curl = 0; b.curlTarget = { ...aim }; b.lastTeam = p.team; b.power = 0; b.handOk = true;
+      this.stats[p.team].passes++;
+      p.ps.passes++;
+      m.runTarget = null;
+      p.action = 'position';
+      p.decisionCd = 0.5;
+      this.effect('pass', p.pos, p.team, { tx: aim.x, ty: aim.y, curve: 0, lofted, throw: true });
+    }
     clear(p) {
       const b = this.ball, c = this.cfg;
-      // toward the nearer touchline and upfield; a scuffed one flies off the pitch
-      const side = p.pos.y < c.W / 2 ? -1 : 1;
-      const up = p.team === 0 ? 1 : -1;
-      const range = this.rng.range(28, 48) * c.k;
-      const ang = this.rng.range(0.45, 1.35);
-      const dir = norm(vec(up * Math.cos(ang), side * Math.sin(ang)));
+      // pick the best of a fan of hoofs: upfield, away from the danger, toward a team-mate or into space,
+      // the touchline as a safe fallback; poise decides how much thought goes into it
+      const up = p.team === 0 ? 1 : -1, sideNear = p.pos.y < c.W / 2 ? -1 : 1;
+      const comp = this.attr(p, 'composure') / 99, opps = this.teamOn(1 - p.team), mates = this.teamOn(p.team).filter(m => m.id !== p.id && !m.isGK);
+      let dir = null, range = 0, bs = -Infinity;
+      for (const ang of [-1.25, -0.8, -0.35, 0, 0.35, 0.8, 1.25]) {
+        const dr = norm(vec(up * Math.cos(ang), Math.sin(ang)));
+        const rg = this.rng.range(28, 46) * c.k;
+        const land = add(p.pos, scale(dr, rg));
+        const out = land.y < 0 || land.y > c.W;
+        const lp = this.clampPitch(land);
+        const mate = this.nearestDist(lp, mates), opp = this.nearestDist(lp, opps);
+        const toward = Math.sign(dr.y) === sideNear ? 0.15 : 0;
+        let s = out ? 0.45 : clamp((opp - mate) / 10, -0.6, 0.6) + 0.25 + toward;
+        s += this.rng.gauss() * (0.5 - 0.35 * comp);
+        if (s > bs) { bs = s; dir = dr; range = rg; }
+      }
       b.owner = null;
       this.launch(dir, kickSpeed(range, true), true, range);
-      b.lofted = true; b.loftFrom = { ...p.pos }; b.loftDist = range; b.cross = false; b.receiver = null; b.passer = p.id; b.noTouchTimer = 0.3; b.lastTeam = p.team; b.curl = 0; b.power = 0;
+      b.lofted = true; b.loftFrom = { ...p.pos }; b.loftDist = range; b.cross = false; b.receiver = null; b.passer = p.id; b.noTouchTimer = 0.3; b.lastTeam = p.team; b.curl = 0; b.power = 0; b.handOk = false;
+      b.offside = null;
       p.action = 'position'; p.decisionCd = 0.5;
       this.effect('pass', p.pos, p.team, { tx: p.pos.x + dir.x * range, ty: p.pos.y + dir.y * range, curve: 0, lofted: true });
     }
@@ -976,7 +1394,7 @@ const Engine = (() => {
     shoot(p, xg, header, pGoalOverride, bonus = 1, kind) {
       const b = this.ball, t = p.team, c = this.cfg;
       const kp = this.keeper(1 - t);
-      const gk = kp ? this.attr(kp, 'goalkeeping') : 25;
+      const SHOT_CAL = 1.3; // arcade: finishing runs a touch hot vs xG (and blocked shots count xG but can't score)
       const dGoal = dist(p.pos, this.attackGoal(t));
       const skid = !header && dGoal > 16 * c.k ? 1 + this.weather.slick : 1;
       const open = pGoalOverride === undefined && !header;
@@ -984,24 +1402,29 @@ const Engine = (() => {
       // special strikes: a thunderbolt from distance, or a curler bent inside the post
       const power = open && dGoal > 17 * c.k && this.rng.chance(clamp((this.attr(p, 'strength') + this.attr(p, 'finishing') - 120) / 120, 0, 0.45) * flair);
       const finesse = !power && open && this.rng.chance(clamp((this.attr(p, 'curve') - 55) / 70, 0, 0.6) * p.rIP.w.curl * flair);
-      const cutIn = !header && this.time < p.cutUntil ? 1.3 : 1;
-      const special = (power ? 1.3 : finesse ? 1.22 : 1) * cutIn * bonus;
-      const crowd = pGoalOverride === undefined ? this.congestion(p) : 0;
-      const pGoal = pGoalOverride ?? clamp(xg * this.finishMult(p, header) * (1.85 - (gk / 99) * 0.95) * skid * special * Math.pow(0.87, crowd) * 0.72, 0.01, 0.88);
+      const cutIn = !header && this.time < p.cutUntil ? 1.12 : 1;
+      const special = (power ? 1.15 : finesse ? 1.12 : 1) * cutIn * bonus;
+      // xg already carries angle, distance, pressure and bodies in the way; finisher and keeper scale it (~1 each at 70)
+      const pGoal = pGoalOverride ?? clamp(xg * this.finishMult(p, header) * this.keeperMult(kp) * skid * special * SHOT_CAL, 0.01, 0.9);
       const fin = this.attr(p, header ? 'heading' : 'finishing') / 99;
+      // on target: accuracy falls with distance; whatever is on target and not in is the keeper's
+      const pOn = pGoalOverride !== undefined ? clamp(pGoal + 0.1 + 0.08 * fin, 0, 0.97)
+        : clamp(pGoal + (0.15 + 0.4 * fin) * clamp(1.25 - dGoal / (40 * c.k), 0.35, 1) * (header ? 0.8 : 1), pGoal, 0.95);
       const gx = t === 0 ? c.L + 0.5 : -0.5;
       let outcome, gy, gz;
-      const reflex = kp && pGoalOverride === undefined && this.rng.chance(clamp((this.attr(kp, 'goalkeeping') - 80) / 120, 0, 0.12));
-      if (this.rng.next() < pGoal && !reflex) {
+      const roll = this.rng.next();
+      if (roll < pGoal) {
         outcome = 'goal';
-        const side = kp && kp.pos.y < c.W / 2 ? 1 : -1;
-        gy = c.W / 2 + side * this.rng.range(c.GW * 0.16, c.GW * 0.45);
+        // a good finisher picks the far side from the keeper; a scruffy one goes where it goes
+        const away = kp && kp.pos.y < c.W / 2 ? 1 : -1;
+        const side = this.rng.chance(0.4 + 0.5 * fin) ? away : -away;
+        gy = c.W / 2 + side * this.rng.range(c.GW * 0.18, c.GW * 0.45);
         gz = this.rng.range(0.15, c.GH - 0.2);
-      } else if (this.rng.next() < clamp(0.32 + 0.3 * fin - dGoal * 0.004 + (special > 1 ? 0.25 : 0), 0.15, 0.8)) {
+      } else if (roll < pOn) {
         outcome = 'saved';
         gy = kp ? clamp(kp.pos.y + this.rng.gauss() * 1.6, c.GY0 + 0.4, c.GY1 - 0.4) : c.W / 2;
         gz = this.rng.range(0.2, 1.9);
-      } else if (this.rng.chance(0.12)) {
+      } else if (this.rng.chance(0.1)) {
         // off the woodwork!
         outcome = 'post';
         const bar = this.rng.chance(0.35);
@@ -1012,7 +1435,10 @@ const Engine = (() => {
         if (this.rng.chance(0.4)) { gy = c.W / 2 + this.rng.range(-c.GW / 2, c.GW / 2); gz = c.GH + this.rng.range(0.4, 3); }
         else { gy = c.W / 2 + (this.rng.chance(0.5) ? 1 : -1) * (c.GW / 2 + this.rng.range(0.4, 4)); gz = this.rng.range(0.1, 2.5); }
       }
-      const speed = 24 + 8 * fin + (power ? 9 : 0) + (pGoalOverride !== undefined ? 2 : 0);
+      // struck harder from further out; headers are softer
+      const speed = (pGoalOverride !== undefined ? 25 + 6 * fin
+        : header ? clamp(11 + 0.35 * dGoal / c.k + 6 * fin, 12, 22) : clamp(17 + 0.45 * dGoal / Math.max(0.6, c.k) + 9 * fin, 18, 36)) + (power ? 8 : 0);
+      b.offside = null;
       const aim = vec(gx, gy);
       let dir = norm(sub(aim, p.pos));
       const dd = dist(p.pos, aim);
@@ -1083,7 +1509,9 @@ const Engine = (() => {
       const shield = p.rIP.holdUp ? 0.4 : 1;
       const jockeyed = carrying ? 1 - 0.12 * Math.min(1, this.pressureOn(p)) * (1.2 - (0.4 * this.attr(p, 'strength')) / 99) * shield : 1;
       const vmax = this.maxSpeed(p) * (carrying ? 0.82 + (0.12 * this.attr(p, 'dribbling')) / 99 : 1) * jockeyed;
-      const cap = vmax * p.urgency;
+      // tired legs: off-ball efforts lose their top end as the stamina goes (chasing the ball and pressing still go flat out)
+      const effort = carrying || p.action === 'chase' || p.action === 'press' || p.action === 'block' ? p.urgency : Math.min(p.urgency, 0.88 + 0.12 * p.stamina);
+      const cap = vmax * effort;
       const to = sub(p.target, p.pos), d = len(to);
       let desired = d < 0.25 ? vec() : scale(to, Math.min(cap, d * 2) / d);
       for (const q of this.onPitch) {
@@ -1217,7 +1645,8 @@ const Engine = (() => {
       b.vel = scale(b.vel, Math.exp(-k * TICK));
       if (b.lofted) {
         const f = dist(b.pos, b.loftFrom) / Math.max(1, b.loftDist);
-        if (f >= 1) { b.lofted = false; b.vel = scale(b.vel, LANDING_DAMP); }
+        // a cross that drops untouched dies on the bounce (it shouldn't trickle on into the net)
+        if (f >= 1) { b.lofted = false; b.vel = scale(b.vel, b.cross ? 0.22 : LANDING_DAMP); if (b.cross) b.curl = 0; }
         else if (this.weather.gust) b.vel = add(b.vel, scale(this.wind, TICK));
       }
       if (b.shot) {
@@ -1242,15 +1671,16 @@ const Engine = (() => {
         o.ps.blocks++;
         if (s.outcome === 'goal' || s.outcome === 'saved') { this.stats[s.team].onTarget--; this.players[s.shooter].ps.onTarget--; }
         const c = this.cfg;
-        const behind = this.rng.chance(0.4);
+        const behind = this.rng.chance(0.5);
         // deflected behind: off for a corner, wide of the posts
         const wide = vec(s.team === 0 ? c.L + 1 : -1, c.W / 2 + (o.pos.y < c.W / 2 ? -1 : 1) * (c.GW / 2 + this.rng.range(1.5, 6)));
         const back = behind ? norm(sub(wide, o.pos)) : rot(norm(scale(b.vel, -1)), this.rng.range(-1.3, 1.3));
         const pw = len(b.vel) / 34;
         b.shot = null; b.curl = 0; b.pos = { ...o.pos };
-        b.vel = scale(back, this.rng.range(5, 12));
+        b.vel = behind ? this.deflectVel(o.pos, wide) : scale(back, this.rng.range(5, 13));
         b.vz = this.rng.range(1, 6);
-        b.receiver = null; b.passer = null; b.noTouchTimer = 0.2; b.lastTeam = o.team;
+        // the ball has just bounced off him: he can't instantly trap his own deflection
+        b.receiver = null; b.passer = null; b.fumbler = o.id; b.noTouchTimer = 0.35; b.lastTeam = o.team;
         this.effect('block', o.pos, o.team, { pid: o.data.id });
         // a rocket to the body flattens him
         if (pw > 0.75 && this.rng.chance(0.5)) this.knock(o, norm(scale(back, -1)), pw * 0.6, 'block');
@@ -1258,11 +1688,39 @@ const Engine = (() => {
       }
       return false;
     }
+    // velocity for a deflection that should actually carry to `tgt` (behind for a corner, out for a throw)
+    deflectVel(from, tgt, spare = [2, 6]) {
+      const d = dist(from, tgt);
+      return scale(norm(sub(tgt, from)), Math.min(30, this.groundK * d + this.rng.range(spare[0], spare[1])));
+    }
+    // the keeper comes for a ball in the air: one go per delivery; claim, punch, or flap (ball stays live)
+    keeperClaim(kp, attTeam) {
+      const b = this.ball;
+      b.gkTried = true;
+      let traffic = 0;
+      for (const q of this.onPitch) if (q.team === attTeam && q.down <= 0 && dist(q.pos, b.pos) < 2.5) traffic++;
+      const q = (0.6 * this.attr(kp, 'goalkeeping') + 0.25 * this.attr(kp, 'positioning') + 0.15 * this.attr(kp, 'composure')) / 99;
+      const pClaim = clamp(0.08 + 0.55 * q - 0.15 * traffic - (b.cross ? 0.4 * (b.crossQuality - 0.5) : 0), 0.08, 0.92) * this.weather.grip;
+      if (this.rng.chance(pClaim)) { this.setOwner(kp); return true; }
+      if (this.rng.chance(0.5)) {
+        const away = rot(norm(sub(this.attackGoal(kp.team), kp.pos)), this.rng.range(-0.9, 0.9));
+        const range = this.rng.range(12, 22) * Math.max(0.6, this.cfg.k);
+        this.effect('save', kp.pos, kp.team, { pid: kp.data.id, power: 0 });
+        this.launch(away, kickSpeed(range, true), true, range);
+        b.gkTried = true;
+        b.lofted = true; b.loftFrom = { ...b.pos }; b.loftDist = range; b.cross = false; b.receiver = null; b.passer = null; b.fumbler = kp.id; b.noTouchTimer = 0.3; b.lastTeam = kp.team; b.curl = 0; b.offside = null;
+        return true;
+      }
+      return false;
+    }
     tryPickup(from) {
       const b = this.ball, speed = len(b.vel);
       if (b.lofted && dist(b.pos, b.loftFrom) / b.loftDist < 0.82) return;
-      if ((b.cross || b.lofted) && b.passer !== null) {
+      if ((b.lofted || (b.cross && b.z > 1.2)) && b.passer !== null) {
         const attTeam = this.players[b.passer].team;
+        // the keeper comes for it: one go per delivery, harder through traffic and against a good ball
+        const kp = this.keeper(1 - attTeam);
+        if (kp && !b.gkTried && kp.down <= 0 && b.z <= 2.9 && this.inAttackingBox(attTeam, b.pos) && dist(kp.pos, b.pos) < 1.4 && this.keeperClaim(kp, attTeam)) return;
         let att = null;
         for (const p of this.onPitch) if (p.team === attTeam && !p.isGK && p.down <= 0 && dist(p.pos, b.pos) < 2.5 && (!att || dist(p.pos, b.pos) < dist(att.pos, b.pos))) att = p;
         if (att) return this.aerialDuel(att);
@@ -1272,35 +1730,51 @@ const Engine = (() => {
         if (p.down > 0 || p.slide > 0.25) continue;
         if (b.noTouchTimer > 0 && (p.id === b.passer || p.id === b.fumbler)) continue;
         if (b.z > (p.isGK ? 2.8 : 2.1)) continue;
-        const r = p.isGK && this.inAttackingBox(1 - p.team, p.pos) ? 1.8 : p.id === b.receiver ? 1.5 : CONTROL_RADIUS;
+        const r = p.isGK && this.inAttackingBox(1 - p.team, p.pos) ? 1.6 : p.id === b.receiver ? 1.5 : CONTROL_RADIUS;
         const d = this.segDist(p.pos, from, b.pos).d;
         if (d <= r) near.push({ p, d });
       }
       if (!near.length) return;
       near.sort((a, c) => a.d - c.d);
       for (const { p } of near) {
-        // in his own box the keeper uses his hands
-        if (p.isGK && this.inAttackingBox(1 - p.team, p.pos) && speed < 16) return this.setOwner(p);
+        // in his own box the keeper uses his hands — unless a team-mate deliberately kicked it back to him
+        const backPass = b.passer !== null && this.players[b.passer].team === p.team && !b.handOk;
+        if (p.isGK && this.inAttackingBox(1 - p.team, p.pos) && speed < 16 && !backPass) {
+          // a cross still in the air is a claim, not a gather; once it's down he just picks it up
+          if (b.cross && b.z > 0.8 && b.passer !== null) { if (b.gkTried || !this.keeperClaim(p, 1 - p.team)) continue; return; }
+          return this.setOwner(p);
+        }
         if (p.id === b.receiver) {
+          if (this.offsideCheck(p)) return;
           const tech = (0.6 * this.attr(p, 'dribbling') + 0.4 * this.attr(p, 'composure')) / 99;
-          const heavy = clamp((speed - 5) / 30 + (b.cross ? 0.1 : 0), 0, 0.4) * (1.1 - tech) * (0.15 + 0.85 * Math.min(1, this.pressureOn(p))) * this.weather.touch;
+          // a heavy touch: pressure makes it likelier, and a hard-hit ball beats a poor first touch on its own
+          const heavy = (clamp((speed - 5) / 30 + (b.cross ? 0.1 : 0), 0, 0.4) * (0.15 + 0.85 * Math.min(1, this.pressureOn(p))) + clamp((speed - 13) / 45, 0, 0.12)) * (1.1 - tech) * this.weather.touch;
           if (this.rng.chance(heavy)) {
             b.vel = scale(rot(vec(1, 0), this.rng.range(0, Math.PI * 2)), this.rng.range(2, 4));
             b.receiver = null; b.passer = null; b.lofted = false; b.cross = false; b.fumbler = p.id; b.noTouchTimer = 0.3; b.curl = 0;
             return;
           }
-          return this.setOwner(p);
+          const lowCross = b.cross && this.inAttackingBox(p.team, p.pos);
+          this.setOwner(p);
+          // a low ball across the box is met first time
+          if (lowCross && this.ball.owner === p.id) p.decisionCd = 0.05;
+          return;
         }
         const marker = b.receiver !== null && this.marks.get(p.id) === b.receiver ? (0.25 * this.attr(p, 'marking')) / 99 : 0;
         const killer = b.threaded && b.receiver !== null && b.passer !== null && this.players[b.passer].team !== p.team ? 0.35 : 1;
         const chance = clamp(1.1 - speed / 30, 0.3, 0.95) * (0.45 + (0.65 * this.attr(p, 'positioning')) / 99 + marker) * killer;
         if (this.rng.chance(chance)) {
+          if (this.offsideCheck(p)) return;
           // a fast ball only gets a toe poked at it: it deflects off and runs loose
           if (b.receiver !== null && speed > 9 && this.rng.chance(b.cross ? 0.45 : 0.3)) {
-            const deep = this.toU(p.team, p.pos.x) < 0.16, c = this.cfg;
+            const deep = this.toU(p.team, p.pos.x) < 0.2, c = this.cfg;
             // near his own byline a defender's touch usually sends it behind for a corner
             const wide = vec(p.team === 0 ? -1 : c.L + 1, c.W / 2 + (p.pos.y < c.W / 2 ? -1 : 1) * (c.GW / 2 + this.rng.range(2, 9)));
-            b.vel = deep && this.rng.chance(0.6) ? scale(norm(sub(wide, p.pos)), speed * this.rng.range(0.4, 0.65)) : scale(rot(norm(b.vel), this.rng.range(-1.4, 1.4)), speed * this.rng.range(0.35, 0.6));
+            // ...and near the touchline it usually skews out for a throw
+            const edgeY = p.pos.y < c.W / 2 ? -1 : c.W + 1, nearLine = Math.abs(edgeY - p.pos.y) < 7;
+            b.vel = deep && this.rng.chance(0.7) ? this.deflectVel(p.pos, wide)
+              : nearLine && this.rng.chance(0.55) ? this.deflectVel(p.pos, vec(p.pos.x + b.vel.x * 0.3 + this.rng.range(-3, 3), edgeY))
+              : scale(rot(norm(b.vel), this.rng.range(-1.4, 1.4)), speed * this.rng.range(0.35, 0.6));
             b.vz = this.rng.range(0, 3); b.receiver = null; b.passer = null; b.lofted = false; b.cross = false; b.curl = 0; b.fumbler = p.id; b.noTouchTimer = 0.25; b.lastTeam = p.team;
             return;
           }
@@ -1310,12 +1784,15 @@ const Engine = (() => {
     }
     aerialDuel(att) {
       const b = this.ball;
+      if (this.offsideCheck(att)) return;
       let def = null;
       for (const o of this.onPitch) {
         if (o.team === att.team || o.down > 0 || dist(o.pos, att.pos) > 2.5) continue;
         if (!def || this.aerialScore(o) > this.aerialScore(def)) def = o;
       }
-      const delivery = b.cross ? (b.crossQuality - 0.6) * 0.4 : 0;
+      const delivery = b.cross ? (b.crossQuality - 0.6) * 0.6 : 0;
+      // a whipped-in, well-placed cross makes the header itself easier
+      const ballQ = b.cross ? 0.7 + 0.6 * b.crossQuality : 1;
       const attWins = !def || this.rng.chance(clamp(0.5 + (this.aerialScore(att) - this.aerialScore(def)) / 99 + delivery, 0.15, 0.85));
       // both go up: Blitz rules, someone usually ends up on the floor
       att.z = 0.05; att.vz = 3.2;
@@ -1326,29 +1803,34 @@ const Engine = (() => {
           if (this.rng.chance(0.3)) this.knock(def, norm(sub(def.pos, att.pos)), 0.35, 'aerial', att);
         }
         const dGoal = dist(att.pos, this.attackGoal(att.team));
-        // the acrobatic finish: a bicycle kick or scissor volley
-        if (dGoal < 18 * this.cfg.k && this.rng.chance(clamp((this.attr(att, 'finishing') + this.attr(att, 'accel') - 120) / 140, 0.02, 0.3) * this.flair(att))) {
+        // the acrobatic finish: a bicycle kick, only for a high ball dropping from behind him (rare)
+        const toGoal = norm(sub(this.attackGoal(att.team), att.pos)), bv = len(b.vel);
+        const fromBehind = bv > 0.5 && dot(scale(b.vel, 1 / bv), toGoal) > 0.2;
+        if (dGoal < 16 * this.cfg.k && fromBehind && b.z > 1.4 && this.rng.chance(clamp((this.attr(att, 'finishing') + this.attr(att, 'accel') - 125) / 1600, 0, 0.015) * this.flair(att))) {
           b.pos = { ...att.pos };
           att.spin = 14; att.down = 0.9; att.vz = 4; att.z = 0.3;
           this.effect('special', att.pos, att.team, { label: 'Bicycle kick', pid: att.data.id });
-          return this.shoot(att, this.shotXg(att, def ? 0.4 : 0, false), false, undefined, 1.4, 'bike');
+          return this.shoot(att, this.shotXg(att, def ? 0.4 : 0, false), false, undefined, 1.25, 'bike');
         }
-        if (dGoal < 16 * this.cfg.k) {
+        // a header at goal when it's on; further out (or facing away) he cushions it down instead
+        const angOk = this.angleXg(att.team, att.pos) > 0.06;
+        const goFor = this.rng.chance(clamp(0.2 + 0.5 * (this.attr(att, 'heading') / 99) + (b.cross ? 0.15 : 0) - dGoal / (40 * this.cfg.k), 0.15, 0.85));
+        if (dGoal < 14 * this.cfg.k && angOk && goFor) {
           b.pos = { ...att.pos };
           // a diving header for the low ones
           if (this.rng.chance(0.25)) { att.dive = 0.5; att.diveDir = 0; att.vel = scale(norm(sub(this.attackGoal(att.team), att.pos)), 6); }
-          return this.shoot(att, this.shotXg(att, def ? 0.4 : 0, true), true);
+          return this.shoot(att, clamp(this.shotXg(att, def ? 0.4 : 0, true) * ballQ, 0.005, 0.8), true);
         }
         return this.setOwner(att);
       }
       def.ps.aerials++;
       this.effect('header', def.pos, def.team, { pid: def.data.id });
       const cc = this.cfg;
-      if (b.cross && this.toU(def.team, def.pos.x) < 0.14 && this.rng.chance(0.35)) {
+      if ((b.cross || this.inAttackingBox(att.team, def.pos)) && this.toU(def.team, def.pos.x) < 0.16 && this.rng.chance(0.55)) {
         // nodded behind for a corner
         const wide = vec(def.team === 0 ? -1 : cc.L + 1, cc.W / 2 + (def.pos.y < cc.W / 2 ? -1 : 1) * (cc.GW / 2 + this.rng.range(2, 7)));
-        b.vel = scale(norm(sub(wide, def.pos)), this.rng.range(6, 10)); b.vz = this.rng.range(2, 5);
-        b.lofted = false; b.cross = false; b.receiver = null; b.passer = null; b.noTouchTimer = 0.3; b.lastTeam = def.team; b.curl = 0;
+        b.vel = this.deflectVel(def.pos, wide); b.vz = this.rng.range(2, 5);
+        b.lofted = false; b.cross = false; b.receiver = null; b.passer = null; b.fumbler = def.id; b.noTouchTimer = 0.35; b.lastTeam = def.team; b.curl = 0; b.offside = null;
         return;
       }
       if (this.rng.chance(0.35)) this.knock(att, norm(sub(att.pos, def.pos)), 0.3, 'aerial', def);
@@ -1361,13 +1843,16 @@ const Engine = (() => {
       const away = rot(norm(sub(this.attackGoal(def.team), def.pos)), this.rng.range(-0.7, 0.7));
       const range = this.rng.range(18, 30) * Math.max(0.6, this.cfg.k);
       this.launch(away, kickSpeed(range, true), true, range);
-      b.lofted = true; b.loftFrom = { ...b.pos }; b.loftDist = range; b.cross = false; b.receiver = null; b.passer = def.id; b.noTouchTimer = 0.3; b.lastTeam = def.team; b.curl = 0;
+      b.lofted = true; b.loftFrom = { ...b.pos }; b.loftDist = range; b.cross = false; b.receiver = null; b.passer = def.id; b.noTouchTimer = 0.3; b.lastTeam = def.team; b.curl = 0; b.handOk = true; b.offside = null;
     }
     setOwner(p) {
       const b = this.ball;
+      if (this.offsideCheck(p)) return;
       b.fumbler = null;
       p.gotBallAt = this.time;
+      p.throwIn = false;
       const prev = this.possession;
+      let turn = 0;
       if (b.passer !== null && !b.shot) {
         const passer = this.players[b.passer];
         if (passer.team === p.team && passer.id !== p.id) {
@@ -1375,6 +1860,14 @@ const Engine = (() => {
           passer.ps.passesOk++;
           p.receivedFrom = passer.id;
           p.receivedAt = this.time;
+          // first touch: receiving facing the ball with goal behind him, he needs time to open up and turn
+          const sp = len(b.vel);
+          if (sp > 1) {
+            const facing = scale(b.vel, -1 / sp), toGoal = norm(sub(this.attackGoal(p.team), p.pos));
+            const ang = Math.acos(clamp(dot(facing, toGoal), -1, 1)) / Math.PI;
+            const tech = (0.5 * this.attr(p, 'dribbling') + 0.5 * this.attr(p, 'composure')) / 99;
+            turn = 0.3 * ang * ang * (1.25 - tech);
+          }
         } else if (passer.team !== p.team && !p.isGK) {
           this.stats[p.team].interceptions++;
           p.ps.interceptions++;
@@ -1382,7 +1875,7 @@ const Engine = (() => {
       }
       b.owner = p.id; b.vel = vec(); b.receiver = null; b.passer = null; b.lofted = false; b.cross = false; b.threaded = false; b.curl = 0; b.shot = null; b.z = 0; b.vz = 0; b.lastTeam = p.team; b.power = 0;
       const ti = this.tac(p.team).team;
-      p.decisionCd = 0.25 + 0.3 * (1 - this.attr(p, 'composure') / 99) - 0.08 * ti.tempo;
+      p.decisionCd = 0.25 + 0.3 * (1 - this.attr(p, 'composure') / 99) - 0.08 * ti.tempo + turn;
       p.action = 'hold';
       p.runTarget = null;
       if (p.team !== prev) {
@@ -1392,7 +1885,8 @@ const Engine = (() => {
         for (const q of this.onPitch) if (q.team === prev) q.runTarget = null;
       }
       this.possession = p.team;
-      if (p.isGK && p.team !== prev) this.startKeeperReset(p);
+      // the keeper only settles and holds it in his own box; a sweeper winning it outside just plays on
+      if (p.isGK && p.team !== prev && this.inAttackingBox(1 - p.team, p.pos)) this.startKeeperReset(p);
     }
     checkShot() {
       const b = this.ball, s = b.shot, c = this.cfg, def = 1 - s.team, kp = this.keeper(def);
@@ -1426,7 +1920,7 @@ const Engine = (() => {
       this.stats[kp.team].saves++;
       this.effect('save', kp.pos, kp.team, { pid: kp.data.id, power });
       b.pos = { x: clamp(b.pos.x, 0.3, c.L - 0.3), y: clamp(b.pos.y, 0.3, c.W - 0.3) };
-      const held = this.rng.chance((0.45 + (0.4 * this.attr(kp, 'goalkeeping')) / 99) * this.weather.grip * (power ? 0.6 : 1));
+      const held = this.rng.chance((0.35 + (0.35 * this.attr(kp, 'goalkeeping')) / 99 + (0.15 * this.attr(kp, 'composure')) / 99) * this.weather.grip * (power ? 0.6 : 1));
       if (held) { b.shot = null; this.setOwner(kp); return; }
       // parried — a thunderbolt can knock the keeper clean off his feet
       if (power && this.rng.chance(0.5)) this.knock(kp, norm(b.vel), 0.5, 'save');
@@ -1439,10 +1933,11 @@ const Engine = (() => {
         b.pos = { x: kp.team === 0 ? Math.max(b.pos.x, 1) : Math.min(b.pos.x, c.L - 1), y: b.pos.y };
         const cy = c.W / 2 + side * (c.GW / 2 + this.rng.range(2, 6));
         const tgt = vec(lineX + (kp.team === 0 ? -0.6 : 0.6), Math.abs(cy - c.W / 2) > Math.abs(b.pos.y - c.W / 2) + 1 ? cy : b.pos.y + side * 3);
-        b.vel = scale(norm(sub(tgt, b.pos)), this.rng.range(7, 12));
+        b.vel = this.deflectVel(b.pos, tgt, [3, 7]);
       } else b.vel = scale(norm(rot(norm(sub(this.attackGoal(kp.team), kp.pos)), this.rng.range(-1.2, 1.2))), this.rng.range(7, 13));
       b.vz = this.rng.range(2, 7);
-      b.receiver = null; b.passer = null; b.noTouchTimer = 0.25; b.lastTeam = kp.team;
+      // parried: the keeper can't simply gather his own parry on the next frame
+      b.receiver = null; b.passer = null; b.fumbler = kp.id; b.noTouchTimer = 0.4; b.lastTeam = kp.team;
     }
     goal(team, scorer) {
       const b = this.ball;
@@ -1477,6 +1972,7 @@ const Engine = (() => {
     }
     throwIn() {
       const b = this.ball, c = this.cfg;
+      this.stats[1 - b.lastTeam].throwIns++;
       this.setRestart('throwin', 1 - b.lastTeam, vec(clamp(b.pos.x, 1, c.L - 1), b.pos.y < 0 ? 0.3 : c.W - 0.3));
     }
     byline() {
@@ -1495,6 +1991,7 @@ const Engine = (() => {
     }
     goalKick(team, y) {
       const c = this.cfg, x = team === 0 ? c.SIX_D : c.L - c.SIX_D;
+      this.stats[team].goalKicks++;
       this.setRestart('goalkick', team, vec(x, c.W / 2 + (y < c.W / 2 ? -c.SIX_W / 3 : c.SIX_W / 3)));
     }
 
@@ -1511,11 +2008,17 @@ const Engine = (() => {
         const ti = this.tac(def.team).team, side = this.teams[def.team];
         const agg = ti.tackling * 0.5 + def.instr.agg * 0.35 + (this.raw(def, 'aggression') - 50) / 100 + (def.pers === 'hothead' ? 0.25 : 0);
         const box = this.inAttackingBox(carrier.team, carrier.pos);
-        const rate = 1.1 * (1 + 0.35 * agg) * def.rOOP.w.tackle * (this.pressers.has(def.id) ? 1.5 + 0.3 * ti.pressing : 1) * (box ? 0.4 : 1);
+        const rate = 0.38 * (1 + 0.35 * agg) * def.rOOP.w.tackle * (this.pressers.has(def.id) ? 1.4 + 0.3 * ti.pressing : 1) * (box ? 0.7 : 1);
         if (!this.rng.chance(rate * TICK)) continue;
         const slide = d > 1.7;
         if (slide && !this.rng.chance(0.5)) continue;
-        def.tackleCd = 0.9;
+        // a standing tackle needs him goal-side or facing the ball; from behind only a slide (and that's risky)
+        const toCar = norm(sub(carrier.pos, def.pos));
+        const facing = Math.cos(def.ang) * toCar.x + Math.sin(def.ang) * toCar.y > 0.3;
+        const goalSide = this.toU(carrier.team, def.pos.x) > this.toU(carrier.team, carrier.pos.x) - 0.4 / this.cfg.L;
+        if (!slide && !facing && !goalSide) continue;
+        const behind = !goalSide && !facing;
+        def.tackleCd = 1.5;
         this.stats[def.team].tackles++;
         def.ps.tackles++;
         if (slide) {
@@ -1535,9 +2038,9 @@ const Engine = (() => {
         }
         const tk = this.attr(def, def.isGK ? 'goalkeeping' : 'tackling'), dr = this.attr(carrier, 'dribbling');
         const shield = carrier.rIP.holdUp && this.toU(carrier.team, carrier.pos.x) > 0.5;
-        const pFoul = clamp(0.06 + 0.06 * agg + 0.12 * Math.max(0, agg) + 0.1 * (1 - tk / 99), 0.02, 0.5) * (box ? 0.5 : 1) * (slide ? 1.4 : 1);
+        const pFoul = clamp((0.19 + 0.07 * agg + 0.1 * Math.max(0, agg) + 0.22 * (1 - tk / 99)) * (box ? 0.42 : 1) * (slide ? 1.3 : 1) * (behind ? 1.8 : 1), 0.04, 0.75);
         const pWin = clamp(0.42 + ((tk - dr) / 99) * 0.7 + 0.03 * agg + ((this.raw(def, 'strength') - this.raw(carrier, 'strength')) / 99) * (shield ? 0.6 : 0.2) + (slide ? 0.15 : 0) - (shield ? 0.15 : 0) + (side.pressBonus && this.pressers.has(def.id) ? 0.06 : 0), 0.05, 0.85);
-        if (this.rng.chance(pFoul)) return this.foul(def, carrier, agg, slide);
+        if (this.rng.chance(pFoul)) return this.foul(def, carrier, agg, slide, behind);
         if (this.rng.chance(pWin)) {
           this.stats[def.team].tacklesWon++;
           def.ps.tacklesWon++;
@@ -1554,7 +2057,11 @@ const Engine = (() => {
           }
           const b = this.ball;
           b.owner = null;
-          b.vel = scale(rot(vec(1, 0), this.rng.range(0, Math.PI * 2)), this.rng.range(4, 8));
+          const cw = this.cfg.W, edgeY = carrier.pos.y < cw / 2 ? -1 : cw + 1;
+          // poked away: near a touchline the tackler often just puts it out of play
+          b.vel = Math.abs(edgeY - carrier.pos.y) < 6 && this.rng.chance(0.5)
+            ? scale(norm(vec(this.rng.range(-0.6, 0.6), Math.sign(edgeY - carrier.pos.y))), this.rng.range(5, 9))
+            : scale(rot(vec(1, 0), this.rng.range(0, Math.PI * 2)), this.rng.range(4, 8));
           b.passer = null; b.receiver = null; b.noTouchTimer = 0.15; b.lastTeam = def.team;
           carrier.decisionCd = 0.4;
           return;
@@ -1564,15 +2071,17 @@ const Engine = (() => {
         else def.vel = scale(def.vel, 0.2);
       }
     }
-    foul(def, victim, agg, slide) {
+    foul(def, victim, agg, slide, behind = false) {
       const st = this.stats[def.team];
       st.fouls++;
       def.ps.fouls++;
       const brutal = clamp(0.35 + agg * 0.4 + (slide ? 0.25 : 0), 0.2, 1);
       this.knock(victim, norm(add(sub(victim.pos, def.pos), scale(victim.vel, 0.1))), brutal, 'foul', def);
       this.effect('foul', victim.pos, def.team, { pid: def.data.id });
-      const pRed = clamp(0.008 + 0.014 * Math.max(0, agg) + (brutal > 0.85 ? 0.02 : 0), 0, 0.07);
-      const pYellow = clamp(0.13 + 0.16 * agg + (slide ? 0.08 : 0), 0.04, 0.55);
+      // straight reds are rare (a brutal lunge from behind); cards mostly for the reckless
+      const pRed = clamp(0.001 + 0.003 * Math.max(0, agg) + (brutal > 0.85 && slide && behind ? 0.02 : brutal > 0.85 ? 0.004 : 0), 0, 0.05);
+      // a booked player is given more leeway before the second yellow
+      const pYellow = clamp(0.2 + 0.1 * agg + (slide ? 0.06 : 0) + (behind ? 0.1 : 0), 0.05, 0.55) * (def.yellows >= 1 ? 0.25 : 1);
       const r = this.rng.next();
       if (r < pRed || (r < pRed + pYellow && def.yellows >= 1)) {
         def.yellows++;
@@ -1604,6 +2113,7 @@ const Engine = (() => {
     setRestart(type, team, pos, timer = RESTART_TIME[type], placeBall = true) {
       const b = this.ball;
       b.owner = null; b.receiver = null; b.passer = null; b.lofted = false; b.cross = false; b.shot = null; b.curl = 0;
+      b.offside = null; this.freeRestart = null;
       if (placeBall) { b.vel = vec(); b.pos = { ...pos }; b.z = 0; b.vz = 0; }
       this.phase = 'restart';
       if (team !== this.possession) this.possStart[team] = this.time;
@@ -1628,7 +2138,8 @@ const Engine = (() => {
     }
     chooseTaker(type, team, pos, direct) {
       const mine = this.teamOn(team), outfield = mine.filter(p => !p.isGK && p.down <= 0);
-      const pool = outfield.length ? outfield : mine;
+      const pool = outfield.length ? outfield : mine.length ? mine : this.onPitch;
+      if (!pool.length) return null;
       if (type === 'goalkick') return (this.keeper(team) || pool[0]).id;
       const pref = this.teams[team].tac;
       if (type === 'penalty') {
@@ -1639,7 +2150,12 @@ const Engine = (() => {
         const set = pool.find(p => p.data.id === pref.fk);
         return (set || pool.reduce((a, c) => (this.attr(c, 'curve') + this.attr(c, 'finishing') > this.attr(a, 'curve') + this.attr(a, 'finishing') ? c : a))).id;
       }
-      if (type === 'corner') return pool.reduce((a, c) => (this.attr(c, 'crossing') + this.attr(c, 'curve') > this.attr(a, 'crossing') + this.attr(a, 'curve') ? c : a)).id;
+      if (type === 'corner') {
+        // the best deliverer, but never one of the two biggest threats in the air: they're wanted in the box
+        const aerial = [...pool].sort((a, c) => this.aerialScore(c) - this.aerialScore(a)).slice(0, pool.length > 4 ? 2 : 0);
+        const cands = pool.filter(p => !aerial.includes(p));
+        return cands.reduce((a, c) => (this.attr(c, 'crossing') + this.attr(c, 'curve') > this.attr(a, 'crossing') + this.attr(a, 'curve') ? c : a)).id;
+      }
       if (type === 'kickoff') return pool.reduce((a, c) => (this.slotFor(c, true).u > this.slotFor(a, true).u ? c : a)).id;
       return pool.reduce((a, c) => (dist(c.pos, pos) < dist(a.pos, pos) ? c : a)).id;
     }
@@ -1696,8 +2212,9 @@ const Engine = (() => {
           return;
         }
       }
-      let taker = this.players[r.taker];
-      if (!taker.active) { r.taker = this.chooseTaker(r.type, r.team, r.pos, r.direct); taker = this.players[r.taker]; }
+      let taker = r.taker != null ? this.players[r.taker] : null;
+      if (!taker || !taker.active) { r.taker = this.chooseTaker(r.type, r.team, r.pos, r.direct); taker = r.taker != null ? this.players[r.taker] : null; }
+      if (!taker) { this.phase = 'play'; this.restart = null; this.wall = null; this.ball.pos = { ...r.pos }; return; }
       const behind = add(r.pos, scale(norm(sub(this.ownGoal(r.team), r.pos)), 0.6));
       for (const p of this.onPitch) {
         if (p.down > 0) { this.move(p); continue; }
@@ -1713,6 +2230,9 @@ const Engine = (() => {
       this.setOwner(taker);
       taker.decisionCd = r.type === 'kickoff' ? 0.2 : 0;
       taker.mustPass = r.type === 'throwin' || r.type === 'goalkick' || r.type === 'corner' || r.type === 'kickoff';
+      // no offside straight from a throw-in, goal kick or corner
+      if (r.type === 'throwin' || r.type === 'goalkick' || r.type === 'corner') this.freeRestart = taker.id;
+      taker.throwIn = r.type === 'throwin';
       if (r.type === 'corner') this.computeBoxRuns();
       if (r.type === 'penalty') {
         const kp = this.keeper(1 - r.team);
@@ -1721,12 +2241,13 @@ const Engine = (() => {
       } else if (r.direct) {
         // over the wall and into the corner — or a clever short one
         const curve = this.attr(taker, 'curve') / 99, fin = this.attr(taker, 'finishing') / 99;
-        if (this.rng.chance(0.55 + 0.35 * curve)) {
-          const dg = dist(taker.pos, this.attackGoal(r.team));
-          const pGoal = clamp(0.04 + 0.2 * curve * curve + 0.06 * fin - dg * 0.002, 0.03, 0.28);
+        const dg = dist(taker.pos, this.attackGoal(r.team));
+        if (this.rng.chance(clamp(0.2 + 0.25 * curve + 0.1 * fin - Math.max(0, dg - 22 * this.cfg.k) * 0.02, 0.1, 0.6))) {
+          const pGoal = clamp(0.03 + 0.14 * curve * curve + 0.05 * fin - dg * 0.0015, 0.02, 0.22);
           this.effect('special', taker.pos, r.team, { label: 'Free kick', pid: taker.data.id });
-          this.shoot(taker, 0.08, false, pGoal, 1, 'fk');
-          if (this.ball.shot) this.ball.shot.checked = this.wall ? [...this.wall.ids] : [];
+          this.shoot(taker, 0.07, false, pGoal, 1, 'fk');
+          // the wall is live: it jumps, and a low or poorly-struck one smacks into it
+          if (this.ball.shot) this.ball.shot.checked = [];
         }
       }
       this.wall = null;

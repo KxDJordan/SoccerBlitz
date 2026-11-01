@@ -238,7 +238,7 @@ const UI = (() => {
     Career.setOnUnlock((a, fresh) => { toast(`<span class="ti">${a.icon}</span><div><div class="tiny gold bold">ACHIEVEMENT${fresh ? '' : ' (career)'}</div>${esc(a.name)}</div>`, 'ach', 3600); Sfx.play('achievement'); });
     let failWarned = 0;
     Store.setOnFail(() => { if (Date.now() - failWarned < 60000) return; failWarned = Date.now(); toast('Your progress couldn’t be saved. Free up space or export your career.', '', 5000); });
-    const persist = () => { if (G) L.flush(true); };
+    const persist = () => { if (G && G.ready && G.userTeamId != null) L.flush(true); };
     window.addEventListener('pagehide', persist);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') persist(); });
   }

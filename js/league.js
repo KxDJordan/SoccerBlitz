@@ -413,6 +413,10 @@ const L = (() => {
     G.acad = G.acad.filter(x => x !== pid);
     p.acad = false; p.wage = Math.max(1, Math.round(marketWage(p) * 0.6)); p.yrs = 3; p.num = 0;
     p.debutPending = true;
+    // academy numbers stay with the academy: senior stats (and awards) start from zero
+    if (p.st && p.st.gp) p.acadSt = p.st;
+    p.st = blankSt();
+    closeAcadMsgs(pid, 'Promoted to the first team.');
     joinTeam(p, t);
     p.promoted = G.season;
     News.promoted(p);
@@ -420,13 +424,19 @@ const L = (() => {
     save();
     return true;
   }
+  // a "come of age" decision is settled once the kid is promoted or released from anywhere
+  function closeAcadMsgs(pid, result) {
+    for (const m of G.inbox || []) if (!m.done && m.type === 'acad' && m.pid === pid) { m.done = true; m.result = result; }
+  }
   function releaseAcademy(pid) {
     const p = P(pid);
-    if (!p) return;
+    if (!p || !p.acad) return false;
     G.acad = G.acad.filter(x => x !== pid);
+    closeAcadMsgs(pid, 'Released.');
     p.acad = false;
     if (p.age >= 17) toFA(p); else { p.tid = -2; delete G.players[pid]; }
     save();
+    return true;
   }
   // a rival academy's five, built the same way every time from the club and season (no need to store them)
   function rivalAcademy(t) {
@@ -645,7 +655,7 @@ const L = (() => {
     G.finSeason = {};
     G.board.obj = Career.objectives();
     G.board.conf = first ? 60 : U.clamp(G.board.conf, 35, 80);
-    for (const p of Object.values(G.players)) { p.st = blankSt(); p.yc = 0; }
+    for (const p of Object.values(G.players)) { p.st = blankSt(); p.yc = 0; delete p.acadSt; }
     for (const t of G.teams) { t.form = []; if (!isUser(t.id) && t.coach != null) aiTactics(t); }
     G.showcase = null;
     Career.seasonStart && Career.seasonStart();
@@ -659,17 +669,31 @@ const L = (() => {
   function acadTableRows() {
     return Object.entries(G.acadTable || {}).map(([tid, r]) => ({ tid: +tid, ...r, gd: r.gf - r.ga })).sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
   }
-  function position(tid) { const t = team(tid); return table(t.leagueId).findIndex(r => r.tid === tid) + 1; }
+  // after the season ends clubs have already changed divisions: read the final standings from the snapshot
+  function finalStanding(tid) {
+    const sm = G.phase === 'post' && G.lastSummary && G.lastSummary.season === G.season ? G.lastSummary.final : null;
+    return (sm && sm[tid]) || null;
+  }
+  // the league whose table this club belongs on right now (its old division during the post-season)
+  function tableLg(tid) { const f = finalStanding(tid); return f ? f.lg : team(tid).leagueId; }
+  function position(tid) {
+    const f = finalStanding(tid);
+    if (f) return f.pos;
+    const t = team(tid);
+    return table(t.leagueId).findIndex(r => r.tid === tid) + 1;
+  }
 
   function endSeason() {
     G.phase = 'post';
-    const summary = { season: G.season, year: G.year, leagues: [], promoted: [], relegated: [] };
+    const summary = { season: G.season, year: G.year, leagues: [], promoted: [], relegated: [], final: {} };
     G.lastTop = {};
     for (const lg of G.leagues) {
       const tb = table(lg.id);
+      // snapshot every club's final standing before promotion and relegation move anyone
+      tb.forEach((r, i) => { summary.final[r.tid] = { lg: lg.id, tier: lg.tier, pos: i + 1, p: r.p, w: r.w, d: r.d, l: r.l, gf: r.gf, ga: r.ga, pts: r.pts }; });
       tb.forEach((r, i) => { const t = team(r.tid); prize(t, DATA.PRIZE.league[lg.tier][i] || 1, `${lg.name} ${U.ord(i + 1)} place`); t.hist.push({ s: G.season, lg: lg.id, pos: i + 1, pts: r.pts }); });
       trophy(team(tb[0].tid), lg.name);
-      summary.leagues.push({ lg: lg.id, champ: tb[0].tid, table: tb.map(r => ({ tid: r.tid, pts: r.pts })) });
+      summary.leagues.push({ lg: lg.id, champ: tb[0].tid, table: tb.map(r => ({ tid: r.tid, pts: r.pts, w: r.w, d: r.d, l: r.l, gf: r.gf, ga: r.ga })) });
       if (lg.tier === 0) G.lastTop[lg.nation] = tb.slice(0, 2).map(r => r.tid);
     }
     // promotion & relegation: two up, two down in every nation
@@ -678,24 +702,24 @@ const L = (() => {
       const down = top.slice(-2).map(r => r.tid), up = bot.slice(0, 2).map(r => r.tid);
       summary.promoted.push(...up); summary.relegated.push(...down);
       for (const id of down) { const t = team(id); t.tier = 1; t.leagueId = n * 2 + 1; t.rep = Math.max(10, t.rep - 8); }
-      for (const id of up) { const t = team(id); t.tier = 0; t.leagueId = n * 2; t.rep = Math.min(80, t.rep + 8); }
+      for (const id of up) { const t = team(id); t.tier = 0; t.leagueId = n * 2; t.rep = Math.max(t.rep, Math.min(80, t.rep + 8)); }
       league(n * 2).teams = league(n * 2).teams.filter(id => !down.includes(id)).concat(up);
       league(n * 2 + 1).teams = league(n * 2 + 1).teams.filter(id => !up.includes(id)).concat(down);
     }
     // reputation drifts with finishing position
     for (const lg of G.leagues) table(lg.id).forEach((r, i) => { const t = team(r.tid); t.rep = Math.round(U.clamp(t.rep + (5.5 - i) * 0.6, 8, 99)); });
     // awards
-    const all = Object.values(G.players).filter(p => p.tid >= 0 && p.st.gp >= 8);
+    const all = Object.values(G.players).filter(p => p.tid >= 0 && !p.acad && p.st.gp >= 8);
     const avgR = p => p.st.rat / Math.max(1, p.st.gp);
     const boot = all.slice().sort((a, b) => b.st.g - a.st.g)[0];
     const poty = all.slice().sort((a, b) => avgR(b) + b.st.g * 0.02 - (avgR(a) + a.st.g * 0.02))[0];
     const young = all.filter(p => p.age <= 21).sort((a, b) => avgR(b) - avgR(a))[0];
     summary.awards = { boot: boot && boot.id, poty: poty && poty.id, young: young && young.id };
     for (const [k, p] of [['boot', boot], ['poty', poty], ['young', young]]) if (p) { p.awards = p.awards || []; p.awards.push({ s: G.season, k }); }
+    const uf = summary.final[G.userTeamId] || { pos: 0, lg: user().leagueId };
+    summary.user = { tid: G.userTeamId, pos: uf.pos, lg: uf.lg };
     G.history.push(summary);
     G.lastSummary = summary;
-    const userPos = position(G.userTeamId);
-    summary.user = { tid: G.userTeamId, pos: userPos, lg: user().leagueId };
     Career.seasonEnd(summary);
     News.seasonEnd(summary);
     coachCarousel(true);
@@ -735,6 +759,7 @@ const L = (() => {
       trimSquad(t);
       fillSquad(t);
     }
+    emergencySign(user());
     const intake = 3 + user().acad.level + (user().ident === 'academy' ? 1 : 0);
     const kids = [];
     for (let i = 0; i < intake; i++) kids.push(mkAcademy(user(), U.ri(15, 16)));
@@ -751,6 +776,13 @@ const L = (() => {
     G.season++;
     G.year++;
     G.scout.known = {};
+    // unsigned youth prospects move on: they sign elsewhere over the summer
+    const gone = new Set();
+    for (const id of G.scout.youth || []) { const p = P(id); if (p && p.tid === -3) { delete G.players[id]; gone.add(id); } }
+    G.scout.youth = [];
+    if (G.shortlist) G.shortlist = G.shortlist.filter(id => !gone.has(id));
+    // only the latest season needs the full final-standings snapshot
+    for (const h of G.history) if (h !== G.lastSummary) delete h.final;
     for (const t of G.teams) if (!isUser(t.id)) aiTactics(t);
     validateUser();
     startSeason(false);
@@ -766,6 +798,19 @@ const L = (() => {
   function trimSquad(t) {
     const sq = squad(t).sort((a, b) => a.ovr - b.ovr);
     while (sq.length > 28) { const p = sq.shift(); toFA(p); }
+  }
+  // the user's squad can thin out over a summer (expiries, retirements); the board tops it up to the minimum with cheap one-year deals
+  function emergencySign(t) {
+    const signed = [];
+    while (squad(t).length < MIN_SQUAD) {
+      const sq = squad(t);
+      const pos = Object.keys(DATA.SQUAD_QUOTA).sort((a, b) => (sq.filter(p => p.pos === a).length - DATA.SQUAD_QUOTA[a]) - (sq.filter(p => p.pos === b).length - DATA.SQUAD_QUOTA[b]))[0];
+      let p = G.fa.map(P).filter(x => x && x.pos === pos && x.age < 34).sort((a, b) => b.ovr - a.ovr)[0];
+      if (!p || p.ovr < teamLevel(t) - 15) p = mkPlayer(pos, Math.round(teamLevel(t) - 8 + U.gauss(0, 3)), U.ri(21, 31), t.nation);
+      joinTeam(p, t); p.yrs = 1; p.wage = Math.round(marketWage(p) * 0.8);
+      signed.push(p);
+    }
+    if (signed.length) Career.inbox({ title: `Board signs ${signed.length} emergency player${signed.length > 1 ? 's' : ''}`, body: `The squad fell below ${MIN_SQUAD} senior players, so the board added ${signed.map(p => `${p.fn} ${p.ln} (${p.pos}, ${p.ovr})`).join(', ')} on one-year deals.` });
   }
   function fillSquad(t) {
     for (const pos in DATA.SQUAD_QUOTA) {
@@ -977,6 +1022,9 @@ const L = (() => {
     return { score: [r.poisson(U.clamp(2 * Math.exp((sh - sa) / 9), 0.3, 6)), r.poisson(U.clamp(1.8 * Math.exp((sa - sh) / 9), 0.3, 6))], players: [], events: [] };
   }
 
+  // the user couldn't field five: a 3-0 walkover to the rivals
+  function acadForfeit(f) { const userHome = f.h === G.userTeamId; return { score: userHome ? [0, 3] : [3, 0], players: [], events: [], forfeit: true }; }
+
   // ── applying results ──
   function rec(tb, tid, gf, ga) {
     const r = tb[tid];
@@ -1062,7 +1110,7 @@ const L = (() => {
   const todays = (day = G.day) => G.fixtures.filter(f => f.day === day);
   function userFixture(day = G.day) { return todays(day).find(f => !f.done && f.comp !== 'A' && (f.h === G.userTeamId || f.a === G.userTeamId)) || null; }
   function userAcadFixture(day = G.day) { return todays(day).find(f => !f.done && f.comp === 'A' && (f.h === G.userTeamId || f.a === G.userTeamId)) || null; }
-  function nextUserFixture() { return G.fixtures.filter(f => !f.done && f.comp !== 'A' && (f.h === G.userTeamId || f.a === G.userTeamId)).sort((a, b) => a.day - b.day)[0] || null; }
+  function nextUserFixture() { return G.fixtures.filter(f => !f.done && f.day >= G.day && f.comp !== 'A' && (f.h === G.userTeamId || f.a === G.userTeamId)).sort((a, b) => a.day - b.day)[0] || null; }
   // what's blocking the day from moving on
   function pending() {
     if (G.phase === 'post') return { kind: 'post' };
@@ -1078,7 +1126,7 @@ const L = (() => {
   function simRest() {
     for (const f of todays()) {
       if (f.done) continue;
-      if (f.comp === 'A') { applyResult(f, quickAcad(f)); continue; }
+      if (f.comp === 'A') { applyResult(f, f.skip ? acadForfeit(f) : quickAcad(f)); continue; }
       if (f.h === G.userTeamId || f.a === G.userTeamId) continue;
       applyResult(f, quickSim(f));
     }
@@ -1216,8 +1264,16 @@ const L = (() => {
     save();
     return { ok: true };
   }
+  // the user's senior squad can't drop below this many players
+  const MIN_SQUAD = 16;
+  const squadFloorWhy = () => `You need at least ${MIN_SQUAD} senior players — sign someone first.`;
+  function canLose(n = 1) { return squad(user()).length - n >= MIN_SQUAD; }
   function sellTo(pid, buyerId, fee, viaOffer) {
     const p = P(pid), u = user(), b = team(buyerId);
+    if (!p || p.tid !== u.id || !b || isUser(b.id)) return { ok: false, why: 'The deal has fallen through.' };
+    if (!windowOpen()) return { ok: false, why: 'The transfer window has closed: the deal is off.' };
+    if (b.fin.bal < fee) return { ok: false, why: `${b.name} can no longer afford the fee.` };
+    if (!canLose()) return { ok: false, why: squadFloorWhy() };
     logMoney(u, fee * (u.ident === 'moneyball' ? 1.0 : 1), 'sales', `Sold ${p.ln} to ${b.abbr}`);
     logMoney(b, -fee, 'fees', `Signed ${p.ln}`);
     joinTeam(p, b);
@@ -1227,6 +1283,7 @@ const L = (() => {
     News.transfer(p, u, b, fee, []);
     Career.onSell(p, fee);
     save();
+    return { ok: true };
   }
   // an AI club proposes a swap: one of their players (plus or minus cash) for one of yours
   function tradeProposal() {
@@ -1249,6 +1306,8 @@ const L = (() => {
     const mine = P(m.pid), theirs = P(m.give), t = team(m.buyer), u = user();
     if (!mine || !theirs || mine.tid !== u.id || theirs.tid !== t.id) return 'The deal has fallen through.';
     if (m.fee < 0 && u.fin.bal < -m.fee) return 'You cannot afford your side of the deal.';
+    if (m.fee > 0 && t.fin.bal < m.fee) return `${t.name} can no longer afford their side of the deal.`;
+    if (!windowOpen()) return 'The transfer window has closed: the deal is off.';
     joinTeam(mine, t); mine.yrs = Math.max(mine.yrs, 2);
     joinTeam(theirs, u); theirs.yrs = Math.max(theirs.yrs, 2); theirs.mor = 75;
     if (m.fee) { logMoney(u, m.fee, m.fee > 0 ? 'sales' : 'fees', `Trade with ${t.abbr}`); logMoney(t, -m.fee, 'fees', `Trade with ${u.abbr}`); }
@@ -1261,6 +1320,7 @@ const L = (() => {
   }
   function release(pid) {
     const p = P(pid), u = user();
+    if (!p || p.tid !== u.id || !canLose()) return null;
     const payoff = +((p.wage * 52 * Math.max(0, p.yrs) * 0.5) / 1000).toFixed(2);
     logMoney(u, -payoff, 'fees', `Released ${p.ln} (settlement)`);
     toFA(p);
@@ -1370,7 +1430,7 @@ const L = (() => {
   }
   function signYouth(pid) {
     const p = P(pid), u = user();
-    if (!p || p.tid !== -3 || u.fin.bal < p.fee) return false;
+    if (!p || p.tid !== -3 || p.age > 17 || u.fin.bal < p.fee) return false;
     logMoney(u, -p.fee, 'fees', `Academy signing: ${p.ln}`);
     p.tid = u.id; p.acad = true; p.wage = 0; p.yrs = 3; p.focus = TAC.defaultRole(p.pos);
     G.acad.push(p.id);
@@ -1399,8 +1459,10 @@ const L = (() => {
 
   // ── coaching carousel: sackings, hirings, and poaching ──
   function expectedPos(t) {
-    const lg = league(t.leagueId);
-    const byRep = lg.teams.slice().sort((a, b) => team(b).rep - team(a).rep);
+    // post-season: judge a club against the division it actually finished in
+    const fs = finalStanding(t.id), fin = fs && G.lastSummary.final;
+    const ids = fs ? Object.keys(fin).map(Number).filter(id => fin[id].lg === fs.lg) : league(t.leagueId).teams;
+    const byRep = ids.slice().sort((a, b) => team(b).rep - team(a).rep);
     return byRep.indexOf(t.id) + 1;
   }
   function coachCarousel(seasonEnd) {
@@ -1468,6 +1530,7 @@ const L = (() => {
   // user changes jobs: identity and reputation go with him
   function takeJob(tid) {
     const old = user(), nu = team(tid);
+    if (!nu || tid === G.userTeamId) return false;
     G.mgr.hist.push({ s: G.season, left: old.id, joined: nu.id });
     // the new club's old boss walks
     if (nu.coach != null) { const c = G.coaches[nu.coach]; c.tid = -1; G.coachPool.push(c.id); nu.coach = null; }
@@ -1486,6 +1549,7 @@ const L = (() => {
     // the academy league follows the new division from next season; this season, leave it as is
     News.userHired(nu);
     save();
+    return true;
   }
 
   // ── facilities ──
@@ -1512,12 +1576,16 @@ const L = (() => {
 
   // ── persistence ──
   let saveT = 0;
-  function save() { if (!G) return; clearTimeout(saveT); saveT = setTimeout(flush, 500); }
-  function flush(hidden) { if (!G) return; clearTimeout(saveT); saveT = 0; try { Store.write(JSON.stringify(G), hidden); } catch (e) { console.warn(e); } }
+  // a world still being set up (no club chosen yet) must never overwrite the real save
+  const saveable = () => !!(G && G.ready && G.userTeamId != null);
+  function save() { if (!saveable()) return; clearTimeout(saveT); saveT = setTimeout(flush, 500); }
+  function flush(hidden) { if (!saveable()) return; clearTimeout(saveT); saveT = 0; try { Store.write(JSON.stringify(G), hidden); } catch (e) { console.warn(e); } }
   function load(text) {
     try {
       const g = JSON.parse(text);
       if (!g || !g.teams || !g.players) return false;
+      // a half-built world (no club taken) isn't a career: fall through to the next copy
+      if (g.userTeamId == null || !g.teams[g.userTeamId] || g.ready === false) return false;
       G = g;
       G.ready = true;
       // older saves had separate in/out-of-possession shapes: fold them into one shape with roles
@@ -1535,10 +1603,10 @@ const L = (() => {
     team, user, P, squad, league, isUser, calcOvr, roleRating, mkPlayer, mkCoach, marketWage, value, payroll, staffWages, logMoney, teamLevel,
     applyPhilosophy, applyRoles, growthInfo, setPlan, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
     dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, resultFor, seasonRecord, lastUserFixture, attendance,
-    table, acadTableRows, position, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
-    askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,
+    table, acadTableRows, position, finalStanding, tableLg, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
+    MIN_SQUAD, canLose, squadFloorWhy, askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,
     REGIONS, scoutCost, startScouting, scoutPlayer, signYouth, knowledge, seenOvr,
     hireStaff, fireStaff, hireManager, takeJob, bestFree, upgradeCost, upgrade,
-    save, flush, load, exportText, importText, wipe,
+    save, flush, saveable, load, exportText, importText, wipe,
   };
 })();

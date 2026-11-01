@@ -23,10 +23,10 @@ const TAC = (() => {
 
   // centre-backs
   role('cd', 'Central Defender', 'CD', ['CB'], 'Defends first. Clears danger and keeps passes simple.', { dribble: 0.35, shoot: 0.3, run: 0.05, direct: 1.15, press: 0.9 }, {}, {}, {}, ['tackling', 'marking', 'heading']);
-  role('bpd', 'Ball-Playing Defender', 'BPD', ['CB'], 'Steps into midfield with the ball and looks for line-breaking passes.', { dribble: 0.6, shoot: 0.3, run: 0.05, pass: 1.25, direct: 1.35 }, {}, {}, {}, ['passing', 'vision', 'composure']);
+  role('bpd', 'Ball-Playing Defender', 'BPD', ['CB'], 'Steps into midfield with the ball and looks for line-breaking passes.', { dribble: 0.6, shoot: 0.3, run: 0.05, pass: 1.25, direct: 1.35 }, { du: 0.08 }, {}, { carry: true }, ['passing', 'vision', 'composure']);
   role('stp', 'Stopper', 'STP', ['CB'], 'Steps out of the line aggressively to attack the ball.', { dribble: 0.35, shoot: 0.3, run: 0.05, press: 1.6, tackle: 1.3 }, {}, { du: 0.04 }, {}, ['tackling', 'aggression', 'strength']);
   role('cov', 'Covering Defender', 'COV', ['CB'], 'Drops off to sweep up behind the line and reads danger early.', { dribble: 0.3, shoot: 0.2, run: 0, press: 0.6, tackle: 0.9 }, { du: -0.02 }, { du: -0.04 }, {}, ['positioning', 'pace', 'marking']);
-  role('wcb', 'Wide Centre-Back', 'WCB', ['CB'], 'Splits wide in possession to carry the ball into the channels and overlap.', { dribble: 0.8, cross: 0.8, run: 0.4, pass: 1.1 }, { du: 0.06, dv: -0.1 }, {}, {}, ['dribbling', 'stamina', 'crossing']);
+  role('wcb', 'Wide Centre-Back', 'WCB', ['CB'], 'Splits wide in possession to carry the ball into the channels and overlap.', { dribble: 0.8, cross: 0.8, run: 0.4, pass: 1.1 }, { du: 0.06, dv: -0.1 }, {}, { runFrom: 0.25, carry: true }, ['dribbling', 'stamina', 'crossing']);
   role('lib', 'Libero', 'LIB', ['CB'], 'Steps out of the back line into midfield with the ball, then sweeps behind it without.', { dribble: 0.9, pass: 1.3, direct: 1.2, run: 0.3, shoot: 0.5 }, { du: 0.16 }, { du: -0.03 }, { roam: 1.1 }, ['passing', 'vision', 'positioning']);
 
   // full-backs
@@ -44,37 +44,37 @@ const TAC = (() => {
   role('bwm', 'Ball-Winning Midfielder', 'BWM', ['DM', 'MF'], 'Hunts the ball, presses and tackles relentlessly.', { run: 0.5, press: 1.8, tackle: 1.4, pass: 0.9 }, {}, {}, { roam: 1.3 }, ['tackling', 'aggression', 'stamina']);
   role('dlp', 'Deep-Lying Playmaker', 'DLP', ['DM', 'MF'], 'Dictates play from deep with long, progressive passing.', { run: 0.3, pass: 1.4, direct: 1.3, press: 0.8, dribble: 0.8, curl: 1.2 }, { du: -0.04 }, {}, {}, ['passing', 'vision', 'curve']);
   role('reg', 'Regista', 'REG', ['DM'], 'A free-roaming deep creator who takes every risk to unlock the defence.', { run: 0.4, pass: 1.55, direct: 1.45, dribble: 1.0, press: 0.6, curl: 1.3 }, { du: 0.02 }, {}, { roam: 1.2 }, ['vision', 'passing', 'curve']);
-  role('vol', 'Segundo Volante', 'VOL', ['DM'], 'Starts deep but bursts forward late to arrive on the edge of the box.', { run: 1.5, shoot: 1.3, press: 1.1, pass: 0.95 }, { du: 0.16 }, {}, { roam: 1.4 }, ['stamina', 'finishing', 'tackling']);
+  role('vol', 'Segundo Volante', 'VOL', ['DM'], 'Starts deep but bursts forward late to arrive on the edge of the box.', { run: 1.5, shoot: 1.3, press: 1.1, pass: 0.95 }, { du: 0.16 }, {}, { roam: 1.4, boxZone: 'spot' }, ['stamina', 'finishing', 'tackling']);
 
   // central midfield
   role('cm', 'Central Midfielder', 'CM', ['MF', 'DM'], 'All-round midfielder who links defence and attack.', { run: 0.8 }, {}, {}, {}, ['passing', 'stamina', 'tackling']);
   role('b2b', 'Box-to-Box', 'B2B', ['MF'], 'Covers every blade of grass, arriving in the box and pressing back.', { run: 1.5, press: 1.25, shoot: 1.1 }, { du: 0.1 }, {}, { roam: 1.8 }, ['stamina', 'tackling', 'finishing']);
-  role('bc', 'Box Crasher', 'BC', ['MF'], 'Makes late, lung-busting runs to arrive in the box as a second striker.', { run: 1.9, shoot: 1.3, pass: 0.9, press: 1.1 }, { du: 0.16 }, {}, { roam: 1.4 }, ['finishing', 'stamina', 'positioning']);
-  role('mez', 'Mezzala', 'MEZ', ['MF'], 'Drifts into the half-space wide of the box to combine and create.', { run: 1.3, dribble: 1.25, pass: 1.15, shoot: 1.1, cross: 1.1 }, { du: 0.14, dv: -0.12 }, {}, { roam: 1.2 }, ['dribbling', 'passing', 'vision']);
+  role('bc', 'Box Crasher', 'BC', ['MF'], 'Makes late, lung-busting runs to arrive in the box as a second striker.', { run: 1.9, shoot: 1.3, pass: 0.9, press: 1.1 }, { du: 0.16 }, {}, { roam: 1.4, boxZone: 'spot' }, ['finishing', 'stamina', 'positioning']);
+  role('mez', 'Mezzala', 'MEZ', ['MF'], 'Drifts into the half-space wide of the box to combine and create.', { run: 1.3, dribble: 1.25, pass: 1.15, shoot: 1.1, cross: 1.1 }, { du: 0.13, dv: -0.06 }, {}, { roam: 1.2, boxZone: 'spot' }, ['dribbling', 'passing', 'vision']);
   role('car', 'Carrilero', 'CAR', ['MF'], 'Shuttles across to cover the flank and keeps the ball moving simply.', { run: 0.5, pass: 1.05, press: 1.1, tackle: 1.1, dribble: 0.7, shoot: 0.6 }, { dv: -0.05 }, { dv: -0.05 }, { roam: 1.3 }, ['stamina', 'positioning', 'passing']);
-  role('hw', 'Half-Winger', 'HW', ['MF', 'AM'], 'Drifts out into the half-space high up the pitch to combine with the winger.', { run: 1.2, dribble: 1.2, pass: 1.15, cross: 1.2 }, { du: 0.14, dv: -0.14 }, {}, {}, ['crossing', 'dribbling', 'pace']);
+  role('hw', 'Half-Winger', 'HW', ['MF', 'AM'], 'Drifts out into the half-space high up the pitch to combine with the winger.', { run: 1.2, dribble: 1.2, pass: 1.15, cross: 1.2 }, { du: 0.2, dv: -0.14 }, {}, {}, ['crossing', 'dribbling', 'pace']);
 
   // attacking midfield
   role('ap', 'Advanced Playmaker', 'AP', ['AM', 'MF'], 'Finds pockets between the lines and creates chances.', { pass: 1.4, dribble: 1.1, direct: 1.2, run: 0.8, press: 0.8, curl: 1.2 }, { du: 0.05 }, {}, {}, ['vision', 'passing', 'dribbling']);
-  role('ss', 'Shadow Striker', 'SS', ['AM'], 'Runs beyond the striker to attack the box.', { run: 1.7, shoot: 1.4, pass: 0.8 }, { du: 0.18 }, { du: 0.04 }, {}, ['finishing', 'accel', 'positioning']);
-  role('c10', 'Classic 10', 'C10', ['AM'], 'A free-roaming number ten: finds space anywhere to create, but barely defends.', { pass: 1.5, dribble: 1.25, direct: 1.25, shoot: 1.1, run: 0.6, press: 0.45, curl: 1.3 }, { du: 0.08 }, { du: 0.12 }, {}, ['vision', 'curve', 'composure']);
-  role('tre', 'Trequartista', 'TRQ', ['AM', 'ST'], 'Free to wander anywhere in the final third, pulling defenders out of shape.', { pass: 1.35, dribble: 1.4, shoot: 1.25, run: 0.7, press: 0.35, curl: 1.4 }, { du: 0.04 }, { du: 0.14 }, { roam: 1.6 }, ['dribbling', 'curve', 'vision']);
+  role('ss', 'Shadow Striker', 'SS', ['AM'], 'Runs beyond the striker to attack the box.', { run: 1.7, shoot: 1.4, pass: 0.8 }, { du: 0.18 }, { du: 0.04 }, { boxZone: 'spot' }, ['finishing', 'accel', 'positioning']);
+  role('c10', 'Classic 10', 'C10', ['AM'], 'A free-roaming number ten: finds space anywhere to create, but barely defends.', { pass: 1.5, dribble: 1.25, direct: 1.25, shoot: 1.1, run: 0.6, press: 0.35, curl: 1.3 }, { du: 0.08 }, { du: 0.15 }, { free: true }, ['vision', 'curve', 'composure']);
+  role('tre', 'Trequartista', 'TRQ', ['AM', 'ST'], 'Free to wander anywhere in the final third, pulling defenders out of shape.', { pass: 1.35, dribble: 1.4, shoot: 1.25, run: 0.7, press: 0.3, curl: 1.4 }, { du: 0.04 }, { du: 0.16 }, { roam: 1.6, free: true, stDrop: -0.09 }, ['dribbling', 'curve', 'vision']);
   role('enz', 'Enganche', 'ENG', ['AM'], 'A static hub behind the striker; everything goes through his feet.', { pass: 1.55, dribble: 0.9, run: 0.2, shoot: 0.9, press: 0.5, direct: 1.3 }, { du: -0.04 }, { du: 0.1 }, { roam: 0.8 }, ['vision', 'passing', 'composure']);
 
   // wide players
-  role('wm', 'Wide Midfielder', 'WM', WIDE_MID, 'Works up and down the flank, tracking back diligently.', { run: 0.9, press: 1.15, cross: 1.1 }, {}, {}, { roam: 1.25 }, ['stamina', 'crossing', 'tackling']);
-  role('dw', 'Defensive Winger', 'DW', WIDE_ALL, 'A winger who presses the full-back and doubles up without the ball.', { run: 0.8, press: 1.5, tackle: 1.2, cross: 1.1 }, {}, { du: -0.04 }, { roam: 1.3 }, ['stamina', 'tackling', 'crossing']);
+  role('wm', 'Wide Midfielder', 'WM', WIDE_MID, 'Works up and down the flank, tracking back diligently.', { run: 0.9, press: 1.15, cross: 1.1 }, { du: 0.03 }, {}, { roam: 1.25 }, ['stamina', 'crossing', 'tackling']);
+  role('dw', 'Defensive Winger', 'DW', WIDE_ALL, 'A winger who presses the full-back and doubles up without the ball.', { run: 0.7, press: 1.65, tackle: 1.2, cross: 1.1 }, { du: -0.05 }, { du: -0.05 }, { roam: 1.3 }, ['stamina', 'tackling', 'crossing']);
   role('wng', 'Winger', 'W', WIDE_ALL, 'Hugs the touchline, beats the full-back and delivers crosses.', { cross: 1.6, dribble: 1.3, run: 1.1, press: 0.8 }, { du: 0.1, dv: -0.06 }, { du: 0.06, dv: -0.03 }, {}, ['pace', 'dribbling', 'crossing']);
-  role('if', 'Inside Forward', 'IF', WIDE_ALL, 'Cuts inside from the flank as a goal threat, attacking crosses at the far post.', { shoot: 1.6, dribble: 1.3, cross: 0.4, run: 1.45, press: 0.8, curl: 1.4 }, { du: 0.2, dv: 0.24 }, { du: 0.08 }, {}, ['finishing', 'dribbling', 'curve']);
+  role('if', 'Inside Forward', 'IF', WIDE_ALL, 'Cuts inside from the flank as a goal threat, attacking crosses at the far post.', { shoot: 1.6, dribble: 1.3, cross: 0.4, run: 1.45, press: 0.8, curl: 1.4 }, { du: 0.2, dv: 0.24 }, { du: 0.08 }, { boxZone: 'far' }, ['finishing', 'dribbling', 'curve']);
   role('iw', 'Inverted Winger', 'IW', WIDE_ALL, 'Drives inside onto his stronger foot to whip in-swinging balls and slide passes.', { pass: 1.25, dribble: 1.25, cross: 1.1, shoot: 1.1, run: 1.0, curl: 1.5 }, { du: 0.12, dv: 0.14 }, { du: 0.05 }, {}, ['curve', 'passing', 'dribbling']);
   role('wp', 'Wide Playmaker', 'WP', WIDE_ALL, 'Starts wide, then drifts inside and a little deeper to dictate play.', { pass: 1.4, direct: 1.2, dribble: 1.1, cross: 0.8, run: 0.5, shoot: 0.9 }, { du: -0.02, dv: 0.2 }, {}, {}, ['vision', 'passing', 'composure']);
-  role('rau', 'Raumdeuter', 'RAU', WINGS, 'A space investigator: ghosts into the box from the flank to poach.', { shoot: 1.7, run: 1.7, dribble: 0.8, cross: 0.4, pass: 0.7, press: 0.6 }, { du: 0.24, dv: 0.28 }, { du: 0.1 }, {}, ['positioning', 'finishing', 'composure']);
+  role('rau', 'Raumdeuter', 'RAU', WINGS, 'A space investigator: ghosts into the box from the flank to poach.', { shoot: 1.7, run: 1.7, dribble: 0.8, cross: 0.4, pass: 0.7, press: 0.6 }, { du: 0.24, dv: 0.28 }, { du: 0.1 }, { boxZone: 'far' }, ['positioning', 'finishing', 'composure']);
   role('wtm', 'Wide Target Man', 'WTM', WIDE_ALL, 'A big body on the flank who wins long diagonals and lays them off.', { dribble: 0.6, aerial: 1.5, run: 0.7, pass: 1.05 }, { du: 0.08 }, { du: 0.04 }, {}, ['heading', 'strength', 'passing']);
 
   // strikers
   role('af', 'Advanced Forward', 'AF', ['ST'], 'Plays on the shoulder of the last defender and runs into the gaps in behind.', { run: 1.5, shoot: 1.1, press: 0.8 }, { du: 0.03 }, { du: 0.1 }, {}, ['pace', 'finishing', 'accel']);
-  role('tm', 'Target Man', 'TM', ['ST'], 'Physical focal point who wins headers and holds the ball up.', { dribble: 0.5, run: 0.6, aerial: 1.5, press: 0.7 }, { du: -0.02 }, { du: 0.1 }, { holdUp: true }, ['heading', 'strength', 'composure']);
-  role('pch', 'Poacher', 'P', ['ST'], 'Lurks in the box waiting for chances. Barely defends.', { shoot: 1.6, pass: 0.7, press: 0.45, run: 1.2 }, { du: 0.05 }, { du: 0.17 }, {}, ['finishing', 'positioning', 'composure']);
+  role('tm', 'Target Man', 'TM', ['ST'], 'Physical focal point who wins headers and holds the ball up.', { dribble: 0.5, run: 0.6, aerial: 1.5, press: 0.7 }, { du: -0.02 }, { du: 0.1 }, { holdUp: true, boxZone: 'near' }, ['heading', 'strength', 'composure']);
+  role('pch', 'Poacher', 'P', ['ST'], 'Lurks in the box waiting for chances. Barely defends.', { shoot: 1.6, pass: 0.7, press: 0.45, run: 1.2 }, { du: 0.08 }, { du: 0.17 }, { boxStay: true, boxZone: 'near' }, ['finishing', 'positioning', 'composure']);
   role('f9', 'False Nine', 'F9', ['ST'], 'Drops deep to link play and drag centre-backs out of position.', { pass: 1.4, dribble: 1.2, run: 0.4, shoot: 0.9 }, { du: -0.18 }, {}, {}, ['passing', 'vision', 'dribbling']);
   role('dlf', 'Deep-Lying Forward', 'DLF', ['ST'], 'Comes short to receive with his back to goal and brings others in.', { pass: 1.25, dribble: 0.9, run: 0.6, shoot: 1.0, aerial: 1.1 }, { du: -0.1 }, { du: 0.06 }, { holdUp: true }, ['passing', 'strength', 'composure']);
   role('cf', 'Complete Forward', 'CF', ['ST'], 'Does it all: holds it up, runs in behind, creates and finishes.', { pass: 1.15, dribble: 1.15, shoot: 1.25, run: 1.15, aerial: 1.2 }, {}, { du: 0.08 }, {}, ['finishing', 'dribbling', 'heading']);
@@ -204,12 +204,22 @@ const TAC = (() => {
     normalize(t);
   }
   function setRole(t, i, id) { if (ROLES[id]) { t.rOOP[i] = id; t.rIP[i] = id; } }
+  // the focus (Defend / Balanced / Attack) stretches the role's attacking movement: Attack always takes a player
+  // further upfield than Balanced (a dropping role drops less), Defend always keeps them deeper
+  const focusDu = (du, focus) => du + (focus || 0) * (0.45 * Math.abs(du) + 0.035);
+  // which way "toward the middle" is for a slot. A central slot has no inside, so it gets a side (by slot index):
+  // roles that drift wide (Half-Winger, Carrilero, Mezzala) still have somewhere to go; inward drift is moot there
+  const lateral = (slot, i, dv) => {
+    const toward = Math.sign(0.5 - slot.v);
+    if (toward) return toward * dv;
+    return dv < 0 ? (i % 2 ? 1 : -1) * dv : 0;
+  };
   // where a role takes a player, in team-block units (for the board): +u is upfield, +v toward the middle
   function zones(roleId, focus = 0) {
     const r = ROLES[roleId];
     if (!r) return { att: { du: 0, dv: 0 }, def: { du: 0, dv: 0 } };
     return {
-      att: { du: r.attack.du * (1 + 0.45 * focus) + 0.035 * focus, dv: r.attack.dv * (1 + 0.3 * focus) },
+      att: { du: focusDu(r.attack.du, focus), dv: r.attack.dv * (1 + 0.3 * focus) },
       def: { du: r.defend.du + 0.03 * focus, dv: r.defend.dv },
     };
   }
@@ -229,5 +239,5 @@ const TAC = (() => {
     return f;
   }
 
-  return { ROLES, LIST, rolesFor, defaultRole, FORMATIONS, FORMATION_IDS, FORMATIONS5, formation, autoMap, TEAM_OPTIONS, PLAYER_OPTIONS, defaultTeam, defaultInstr, make, ipPos, oopPos, roleOf, normalize, setFormation, setRole, zones, clone, fam };
+  return { ROLES, LIST, rolesFor, defaultRole, FORMATIONS, FORMATION_IDS, FORMATIONS5, formation, autoMap, TEAM_OPTIONS, PLAYER_OPTIONS, defaultTeam, defaultInstr, make, ipPos, oopPos, roleOf, normalize, setFormation, setRole, zones, focusDu, lateral, clone, fam };
 })();

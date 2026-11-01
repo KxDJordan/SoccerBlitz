@@ -22,7 +22,7 @@
     return `<div class="scroll">${heroCard(u)}${nextCard()}${lastResultCard()}${calStrip()}${challengeCard()}${inboxPreview()}${boardCard()}${miniTable()}${newsTeaser()}</div>`;
   }
   function heroCard(u) {
-    const pos = L.position(u.id), lg = L.league(u.leagueId), lrec = (G.table[lg.id] || {})[u.id] || { pts: 0 }, rec = L.seasonRecord(u.id);
+    const pos = L.position(u.id), lg = L.league(L.tableLg(u.id)), lrec = (G.table[lg.id] || {})[u.id] || { pts: 0 }, rec = L.seasonRecord(u.id);
     return `<div class="hero" style="${UI.teamVars(u)}"><div class="hcrest">${UI.crest(u, 170)}</div>
       <div class="kicker" style="color:rgba(255,255,255,.72)">${esc(lg.name)} · ${DATA.CLUB_IDS[u.ident].icon} ${esc(DATA.CLUB_IDS[u.ident].name)}</div>
       <div class="nm">${esc(u.name)}</div><div class="sub">${esc(G.mgr.name)} · ${DATA.COACH_IDS[G.mgr.ident].icon} ${esc(DATA.COACH_IDS[G.mgr.ident].name)}</div>
@@ -104,9 +104,9 @@
       <div class="prog mt8"><i style="width:${c}%;background:${c < 30 ? 'var(--bad)' : c < 50 ? 'var(--warn)' : 'var(--good)'}"></i></div><div class="tiny dim mt4">Confidence ${c}/100${c < 20 ? ' · your job is at risk' : ''}</div></div>`;
   }
   function miniTable() {
-    const u = L.user(), tb = L.table(u.leagueId), i = Math.max(0, tb.findIndex(r => r.tid === u.id));
+    const u = L.user(), lgId = L.tableLg(u.id), tb = L.table(lgId), i = Math.max(0, tb.findIndex(r => r.tid === u.id));
     const lo = U.clamp(i - 2, 0, Math.max(0, tb.length - 5)), rows = tb.slice(lo, lo + 5);
-    return `<div class="card"><h3>${esc(L.league(u.leagueId).name)}<span class="grow"></span><button class="btn xs" data-a="tab" data-v="league:table">Table</button></h3><table class="tbl"><tr><th>#</th><th class="l">Club</th><th>P</th><th>GD</th><th>Pts</th></tr>${rows.map(r => `<tr class="${r.tid === u.id ? 'me' : ''}"><td>${tb.indexOf(r) + 1}</td><td class="l"><span class="tm">${UI.crest(T(r.tid), 20)}${esc(T(r.tid).name)}</span></td><td>${r.p}</td><td>${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="pts">${r.pts}</td></tr>`).join('')}</table></div>`;
+    return `<div class="card"><h3>${esc(L.league(lgId).name)}<span class="grow"></span><button class="btn xs" data-a="tab" data-v="league:table">Table</button></h3><table class="tbl"><tr><th>#</th><th class="l">Club</th><th>P</th><th>GD</th><th>Pts</th></tr>${rows.map(r => `<tr class="${r.tid === u.id ? 'me' : ''}"><td>${tb.indexOf(r) + 1}</td><td class="l"><span class="tm">${UI.crest(T(r.tid), 20)}${esc(T(r.tid).name)}</span></td><td>${r.p}</td><td>${r.gd > 0 ? '+' : ''}${r.gd}</td><td class="pts">${r.pts}</td></tr>`).join('')}</table></div>`;
   }
   function newsTeaser() {
     const n = G.news.slice(0, 3);
@@ -159,7 +159,7 @@
     if (!Play.enough(f)) { f.skip = true; UI.toast('Not enough academy players for a 5-a-side — match forfeited.'); L.save(); UI.render(); return; }
     const { res } = Play.quick(f);
     const side = f.h === G.userTeamId ? 0 : 1;
-    UI.toast(`🎓 Academy: ${T(f.h).abbr} ${res.score[0]}-${res.score[1]} ${T(f.a).abbr}${res.score[side] > res.score[1 - side] ? ' — win!' : ''}`);
+    UI.toast(`🎓 Academy: ${esc(T(f.h).abbr)} ${res.score[0]}-${res.score[1]} ${esc(T(f.a).abbr)}${res.score[side] > res.score[1 - side] ? ' — win!' : ''}`);
     UI.render();
   };
   A.msgAct = v => {
@@ -338,7 +338,7 @@
   A.toggleShort = v => { const id = +v; G.shortlist = G.shortlist.includes(id) ? G.shortlist.filter(x => x !== id) : [...G.shortlist, id]; L.save(); UI.refreshSheet(); };
   A.toggleList = v => { const p = P(+v); p.listed = !p.listed; L.save(); UI.toast(p.listed ? `${esc(p.ln)} is on the transfer list` : `${esc(p.ln)} taken off the list`); UI.refreshSheet(); };
   A.scoutPlayer = v => { if (L.scoutPlayer(+v)) UI.toast('🔭 Report in 3 days'); else UI.toast('Already being scouted, or not enough money.'); };
-  A.releaseP = v => { const p = P(+v); const pay = +((p.wage * 52 * Math.max(0, p.yrs) * 0.5) / 1000).toFixed(2); UI.confirm(`Release ${p.ln}?`, `You'll pay a settlement of ${U.money(pay)} and he becomes a free agent.`, 'Release', () => { L.release(+v); UI.toast(`${esc(p.ln)} released`); UI.render(); }, true); };
+  A.releaseP = v => { const p = P(+v); if (!L.canLose()) { UI.toast(esc(L.squadFloorWhy())); return; } const pay = +((p.wage * 52 * Math.max(0, p.yrs) * 0.5) / 1000).toFixed(2); UI.confirm(`Release ${p.ln}?`, `You'll pay a settlement of ${U.money(pay)} and he becomes a free agent.`, 'Release', () => { if (L.release(+v) == null) UI.toast(esc(L.squadFloorWhy())); else UI.toast(`${esc(p.ln)} released`); UI.render(); }, true); };
   A.focusSheet = v => {
     const p = P(+v);
     UI.sheet(`<h2>Development plan</h2><div class="flex mb12">${UI.face(p, 48)}<div class="grow"><div class="bold">${esc(p.fn)} ${esc(p.ln)}</div><div class="small muted">${UI.posB(p.pos)} ${p.age} yrs · ${p.ovr} overall</div></div><button class="btn xs" data-a="player" data-v="${p.id}">Profile</button></div>${devPanel(p)}`, { vars: UI.teamVars(L.user()), refresh: () => A.focusSheet(v) });

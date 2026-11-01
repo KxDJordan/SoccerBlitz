@@ -95,7 +95,7 @@
   };
   A.teamSheet = v => {
     const t = T(+v), sq = L.squad(t).sort((a, b) => b.ovr - a.ovr), c = t.coach != null ? G.coaches[t.coach] : null;
-    const r = (G.table[t.leagueId] || {})[t.id];
+    const r = (G.table[L.tableLg(t.id)] || {})[t.id];
     UI.sheet(`<div class="hero" style="${UI.teamVars(t)}"><div class="hcrest">${UI.crest(t, 160)}</div><div class="kicker" style="color:rgba(255,255,255,.75)">${esc(L.league(t.leagueId).name)} · Founded ${t.founded}</div><div class="nm">${esc(t.name)}</div><div class="sub">${DATA.CLUB_IDS[t.ident].icon} ${esc(DATA.CLUB_IDS[t.ident].name)} · ${esc(t.stadium.name)}</div>
       <div class="hero-stats"><div><b>${L.position(t.id) ? U.ord(L.position(t.id)) : '–'}</b><span>Position</span></div><div><b>${r ? r.pts : 0}</b><span>Points</span></div><div><b>${t.rep}</b><span>Rep</span></div><div><b>${Math.round(L.teamLevel(t))}</b><span>Squad</span></div></div></div>
       ${c && t.id !== G.userTeamId ? `<div class="row tap" data-a="coachSheet" data-v="${c.id}">${Art.coachFace(c, 38)}<div class="grow"><div class="nm">${esc(c.fn)} ${esc(c.ln)}</div><div class="meta">${DATA.COACH_IDS[c.ident].icon} ${esc(DATA.COACH_IDS[c.ident].name)} · plays ${t.tac ? t.tac.oop : ''}</div></div>${I.chev}</div>` : ''}

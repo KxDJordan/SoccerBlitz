@@ -168,10 +168,10 @@ const Career = (() => {
   }
   function seasonEnd(sm) {
     const t = u(), pos = sm.user.pos, obj = G.board.obj;
-    const lgId = t.leagueId;
+    // promotion/relegation has already moved the club: judge it on the table it finished in
+    const fin = (sm.final && sm.final[t.id]) || null;
     if (sm.promoted.includes(t.id)) unlock('promoted');
-    const tb = L.table(lgId);
-    if (tb.length && tb[0].tid === t.id && tb[0].l === 0) unlock('invincible');
+    if (fin && fin.pos === 1 && fin.l === 0) unlock('invincible');
     if (G.bottomAtXmas && t.tier === 0 && !sm.relegated.includes(t.id)) unlock('great_escape');
     G.bottomAtXmas = false;
     // verdict
@@ -187,12 +187,12 @@ const Career = (() => {
     // job offers for the in-demand manager
     else if (verdict === 'exceeded' || G.mgr.rep > t.rep + 10) {
       const bigger = G.teams.filter(x => x.id !== t.id && x.rep > t.rep + 4 && x.rep <= G.mgr.rep + 25 && !L.isUser(x.id)).sort(() => Math.random() - 0.5).slice(0, 2);
-      for (const b of bigger) inbox({ type: 'job', tid: b.id, title: `Job offer: ${b.name}`, body: `${b.name} (${L.league(b.leagueId).name}, reputation ${b.rep}) want you as their manager. Your ${DATA.COACH_IDS[G.mgr.ident].name} identity goes with you; your academy and staff stay behind.`, actions: [{ label: 'Accept the job', act: 'jobAccept', v: b.id }, { label: 'Stay loyal', act: 'dismiss' }] });
+      for (const b of bigger) inbox({ type: 'job', tid: b.id, title: `Job offer: ${b.name}`, body: `${b.name} (${L.league(b.leagueId).name}, reputation ${b.rep}) want you as their manager. Your ${DATA.COACH_IDS[G.mgr.ident].name} identity goes with you; your academy and staff stay behind.`, actions: [{ label: 'Accept the job', act: 'jobAccept', v: b.id }, { label: 'Stay loyal', act: 'dismiss' }], expires: G.day + 14 });
     }
     // identities evolve: the club becomes what it does
     const season = G.season, wins = t.form;
     const debuts = L.squad(t).filter(p => p.promoted === season).length;
-    const goals = tb.find(r => r.tid === t.id);
+    const goals = fin;
     let nu = null;
     if (debuts >= 3 && t.ident !== 'academy') nu = 'academy';
     else if (goals && goals.gf >= 60 && t.ident !== 'entertainers') nu = 'entertainers';
@@ -250,9 +250,11 @@ const Career = (() => {
     { id: 'agent', w: 2, make() { const p = L.mkPlayer(U.pick(DATA.POS), Math.round(L.teamLevel(u()) + U.ri(0, 5)), U.ri(28, 32), U.ri(0, 3)); L.toFA(p); p.wage = Math.round(L.marketWage(p) * 1.4); return { title: 'A super-agent calls', body: `${p.fn} ${p.ln} (${p.pos}, ${p.ovr}) is a free agent and "open to offers". Wage demands are steep.`, actions: [{ label: 'View player', act: 'player', v: p.id }, { label: 'Not interested', fn() { return 'Noted.'; } }] }; } },
     { id: 'derby', w: 2, make() { return { title: 'Derby week fever', body: 'The city is painted in club colours. Merchandise flies off the shelves.', auto() { L.logMoney(u(), 0.3, 'spon', 'Derby merch'); for (const p of L.squad(u())) p.mor = Math.min(100, p.mor + 2); } }; } },
   ];
+  // offers with a deadline lapse after it, and never survive into a new season (the day count restarts)
+  const expired = m => !m.done && !!m.expires && (G.day > m.expires || (m.s != null && m.s !== G.season));
   function daily() {
     // expire stale bids
-    for (const m of G.inbox) if (!m.done && m.expires && G.day > m.expires) { m.done = true; m.result = 'Expired'; }
+    for (const m of G.inbox) if (expired(m)) { m.done = true; m.result = 'Expired'; }
     // Christmas check for the Great Escape
     if (G.day === 100) { const tb = L.table(u().leagueId); if (tb.length && tb[tb.length - 1].tid === G.userTeamId && u().tier === 0) G.bottomAtXmas = true; }
     if (G.lastEventDay && G.day - G.lastEventDay < 5) return;
@@ -288,7 +290,8 @@ const Career = (() => {
   function showcaseInvite() {
     const opp = G.teams.filter(t => t.nation !== u().nation && t.tier === 0).sort((a, b) => b.rep - a.rep)[U.ri(0, 4)];
     G.showcase = { opp: opp.id, state: 'invited' };
-    inbox({ type: 'showcase', title: `${DATA.SHOWCASE} invitation`, body: `Organisers invite you to a glamour friendly against ${opp.name} on ${L.dateStr(DATA.SEASON.SHOWCASE, true)}. Appearance fee ${U.money(DATA.PRIZE.showcase)}, more for a win. Your players will be tired for the next league game.`, actions: [{ label: 'Accept', act: 'showcaseYes' }, { label: 'Decline', act: 'dismiss' }] });
+    // the answer is needed before the day itself
+    inbox({ type: 'showcase', title: `${DATA.SHOWCASE} invitation`, body: `Organisers invite you to a glamour friendly against ${opp.name} on ${L.dateStr(DATA.SEASON.SHOWCASE, true)}. Appearance fee ${U.money(DATA.PRIZE.showcase)}, more for a win. Your players will be tired for the next league game.`, actions: [{ label: 'Accept', act: 'showcaseYes' }, { label: 'Decline', act: 'dismiss' }], expires: DATA.SEASON.SHOWCASE - 1 });
   }
 
   // ── owner challenges ──
@@ -312,7 +315,7 @@ const Career = (() => {
     moneyball: { name: 'Moneyball', icon: '📈', desc: 'No transfer budget and a wage cap. Reach the top four in the top flight within three seasons — and stay in the black.', seasons: 3,
       teams: () => G.teams.filter(t => t.tier === 0 && t.rep <= 55),
       setup() { u().fin.bal = 0; u().ident = 'moneyball'; },
-      status() { const t = u(); const pos = L.position(t.id); const done = G.phase === 'post' && t.tier === 0 && pos <= 4 && t.fin.bal >= 0; return { done, failed: G.season > 3 && !done, text: `Season ${G.season}/3 · ${U.ord(pos)} · ${U.money(t.fin.bal)}` }; } },
+      status() { const t = u(); const pos = L.position(t.id); const fs = L.finalStanding(t.id); const tier = fs ? fs.tier : t.tier; const done = G.phase === 'post' && tier === 0 && pos <= 4 && t.fin.bal >= 0; return { done, failed: G.season > 3 && !done, text: `Season ${G.season}/3 · ${U.ord(pos)} · ${U.money(t.fin.bal)}` }; } },
     cupkings: { name: 'Cup Kings', icon: '🥇', desc: 'A second-division minnow. Win your national cup within three seasons.', seasons: 3,
       teams: () => G.teams.filter(t => t.tier === 1 && t.rep <= 40),
       setup() { },
@@ -359,33 +362,43 @@ const Career = (() => {
     const a = m.actions && m.actions[actIdx];
     if (!a) return null;
     m.read = true;
+    if (a.act !== 'player' && a.act !== 'tab') {
+      if (expired(m)) { m.done = true; m.result = 'Expired'; return { text: 'Too late: this has expired.' }; }
+      if (m.done) return { text: m.result || '' };
+    }
     switch (a.act) {
       case 'event': return { text: answerEvent(m, a.v) };
       case 'dismiss': m.done = true; m.result = 'Dismissed.'; return { text: '' };
       case 'promote': if (L.promote(a.v)) { m.done = true; m.result = 'Promoted to the first team.'; } return { text: m.result };
-      case 'releaseAcad': L.releaseAcademy(a.v); m.done = true; m.result = 'Released.'; return { text: m.result };
+      case 'releaseAcad': m.done = true; m.result = L.releaseAcademy(a.v) ? 'Released.' : 'No longer in the academy.'; return { text: m.result };
       case 'acceptBid': {
         const p = G.players[m.pid];
         if (!p || p.tid !== G.userTeamId) { m.done = true; m.result = 'No longer at the club.'; return { text: m.result }; }
-        L.sellTo(m.pid, m.buyer, m.fee, true); m.done = true; m.result = `Sold for ${U.money(m.fee)}.`; return { text: m.result };
+        const r = L.sellTo(m.pid, m.buyer, m.fee, true);
+        if (!r.ok) { if (!L.canLose()) return { text: r.why }; m.done = true; m.result = r.why; return { text: m.result }; }
+        m.done = true; m.result = `Sold for ${U.money(m.fee)}.`; return { text: m.result };
       }
       case 'counterBid': {
         const p = G.players[m.pid];
         if (!p || p.tid !== G.userTeamId) { m.done = true; return { text: 'No longer at the club.' }; }
-        const want = +(m.fee * 1.25).toFixed(2);
-        if (Math.random() < (p.listed ? 0.55 : 0.4)) { L.sellTo(m.pid, m.buyer, want, true); m.done = true; m.result = `They paid up: sold for ${U.money(want)}.`; }
+        const want = +(m.fee * 1.25).toFixed(2), b = L.team(m.buyer);
+        if (!L.canLose()) return { text: L.squadFloorWhy() };
+        if (!L.windowOpen()) { m.done = true; m.result = 'The transfer window has closed: the deal is off.'; }
+        else if (!b || b.fin.bal < want) { m.done = true; m.result = `${b ? b.name : 'They'} can't stretch to ${U.money(want)} and walk away.`; }
+        else if (Math.random() < (p.listed ? 0.55 : 0.4)) { const r = L.sellTo(m.pid, m.buyer, want, true); m.done = true; m.result = r.ok ? `They paid up: sold for ${U.money(want)}.` : r.why; }
         else { m.done = true; m.result = 'They walked away.'; }
         return { text: m.result };
       }
       case 'rejectBid': { const p = G.players[m.pid]; if (p && p.pers === 'ambitious' && m.fee > L.value(p) * 1.1) { p.mor = Math.max(10, p.mor - 12); p.wantsOut = true; } m.done = true; m.result = 'Rejected.'; return { text: m.result }; }
       case 'acceptTrade': { m.done = true; m.result = L.executeTrade(m); return { text: m.result }; }
       case 'showcaseYes': {
+        if (!G.showcase || G.showcase.state !== 'invited' || G.day >= DATA.SEASON.SHOWCASE) { m.done = true; m.result = 'Too late: the organisers have filled the slot.'; return { text: m.result }; }
         const opp = G.showcase.opp;
         G.fixtures.push({ id: G.nextFx++, day: DATA.SEASON.SHOWCASE, comp: 'S', lg: -1, rd: 'S', h: G.userTeamId, a: opp, done: false, hs: 0, as: 0, wx: { id: 'clear', ko: 'night', temp: 4, wa: 0, ws: 0 }, seed: U.ri(1, 2 ** 31 - 2), neutral: true, ko: true });
         G.showcase.state = 'accepted'; m.done = true; m.result = 'Accepted. See you under the lights.';
         return { text: m.result };
       }
-      case 'jobAccept': L.takeJob(a.v); unlock('job_hopper'); m.done = true; m.result = `You are the new ${L.team(a.v).name} manager.`; return { text: m.result, nav: 'home' };
+      case 'jobAccept': if (!L.takeJob(a.v)) { m.done = true; m.result = 'You already manage this club.'; return { text: m.result }; } unlock('job_hopper'); m.done = true; m.result = `You are the new ${L.team(a.v).name} manager.`; return { text: m.result, nav: 'home' };
       case 'player': return { nav: 'player', v: a.v };
       case 'tab': return { nav: 'tab', v: a.v };
       default: return null;
