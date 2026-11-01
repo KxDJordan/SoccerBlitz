@@ -22,7 +22,8 @@ const Play = (() => {
   function weatherFor(f) {
     const w = DATA.WEATHER[f.wx ? f.wx.id : 'clear'] || DATA.WEATHER.clear;
     const ws = f.wx ? f.wx.ws || 0 : 0, wa = f.wx ? f.wx.wa || 0 : 0;
-    return { weather: w, wind: { x: Math.cos(wa) * ws, y: Math.sin(wa) * ws } };
+    // a worn pitch plays like bad weather
+    return Xtra.pitchWeather(f, { weather: w, wind: { x: Math.cos(wa) * ws, y: Math.sin(wa) * ws } });
   }
   function create(f) {
     const h = L.team(f.h), a = L.team(f.a);
@@ -81,6 +82,8 @@ const Play = (() => {
     }
     G.stats.hits += res.stats[f.h === G.userTeamId ? 0 : 1].hits;
     Career.onMatch(f, res, { specialGoals: specials, live });
+    Xtra.logGoals(f, m);
+    Xtra.checkUnlocks();
     News.matchReport(f, res, live);
     L.save();
     return res;

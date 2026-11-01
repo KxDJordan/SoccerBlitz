@@ -140,7 +140,7 @@
   function inboxList() {
     for (const m of G.inbox) if (!m.actions || !m.actions.length || m.done) m.read = true;
     return G.inbox.length ? G.inbox.slice(0, 50).map(m => {
-      const icon = { trade: '🔄', bid: '💰', event: '⚡', acad: '🎓', scout: '🔭', injury: '🩹', contract: '📝', job: '💼', board: '🏛️', showcase: '🌟', unrest: '😤' }[m.type] || '✉️';
+      const icon = { trade: '🔄', bid: '💰', event: '⚡', acad: '🎓', scout: '🔭', injury: '🩹', contract: '📝', job: '💼', board: '🏛️', showcase: '🌟', unrest: '😤', sponsor: '🤝', unlock: '🎨', vote: '🗳️' }[m.type] || '✉️';
       return `<div class="msg"><div class="mt"><span>${icon}</span><span class="grow">${esc(m.title)}</span><span class="tiny dim">${L.dateStr(m.day, true)}</span></div>${m.body ? `<div class="mb">${esc(m.body)}</div>` : ''}${!m.done && m.actions ? `<div class="acts">${m.actions.map((a, i) => `<button class="btn xs ${i === 0 ? 'primary' : a.danger ? 'danger' : ''}" data-a="msgAct" data-v="${m.id}:${i}">${esc(a.label)}</button>`).join('')}</div>` : ''}${m.result ? `<div class="res">${esc(m.result)}</div>` : ''}</div>`;
     }).join('') : '<div class="empty">Nothing yet.</div>';
   }
@@ -165,27 +165,175 @@
       <div class="card"><h3>🏛️ Board objective</h3><div class="bold">${esc(G.board.obj ? G.board.obj.label : '—')}</div><div class="prog mt8"><i style="width:${G.board.conf}%"></i></div><div class="tiny dim mt4">Confidence ${G.board.conf}/100</div></div>
       ${st ? `<div class="card"><h3>${st.ch.icon} ${esc(st.ch.name)}</h3><div class="small muted">${esc(st.ch.desc)}</div><div class="small mt8">${esc(st.text)}</div></div>` : ''}`;
   }
+  // ════════ FINANCE ════════
+  const FIN_TABS = [['summary', 'Summary'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['matchday', 'Matchday'], ['sponsors', 'Sponsors']];
   function finance() {
-    const u = L.user(), s = G.finSeason, wages = L.payroll(u);
-    const inc = ['gate', 'tv', 'spon', 'prize', 'sales', 'events'], exp = ['wages', 'ops', 'fees'];
-    const names = { gate: 'Gate receipts', tv: 'Broadcast', spon: 'Sponsors & merch', prize: 'Prize money', sales: 'Player sales', events: 'Events & tours', wages: 'Player wages', ops: 'Staff & running costs', fees: 'Transfer fees & other' };
-    const totIn = U.sum(inc.map(k => Math.max(0, s[k] || 0))), totOut = U.sum(exp.map(k => Math.min(0, s[k] || 0)));
-    const max = Math.max(1, ...inc.concat(exp).map(k => Math.abs(s[k] || 0)));
-    const line = k => `<div class="attr" style="grid-template-columns:130px 1fr 64px"><span class="small">${names[k]}</span><div class="bar"><i style="width:${(Math.abs(s[k] || 0) / max) * 100}%;${(s[k] || 0) < 0 ? 'background:var(--bad)' : ''}"></i></div><b class="small ${(s[k] || 0) < 0 ? 'bad' : ''}" style="font-size:13px">${U.money(s[k] || 0)}</b></div>`;
-    const recent = G.finLog.slice(0, 40);
-    // weekly net, last 16 weeks
-    const weeks = {};
-    for (const e of G.finLog) if (e.s === G.season) { const w = Math.floor((e.d - 1) / 7); weeks[w] = (weeks[w] || 0) + e.amt; }
-    const wk = Object.keys(weeks).map(Number).sort((a, b) => a - b).slice(-16);
-    const wmax = Math.max(0.1, ...wk.map(w => Math.abs(weeks[w])));
-    return `<div class="kv mb12"><div><b class="${u.fin.bal < 0 ? 'bad' : ''}">${U.money(u.fin.bal)}</b><span>Bank</span></div><div><b>${U.wage(wages).replace('/wk', '')}</b><span>Wages/wk</span></div><div><b class="${L.wageRoom() < 0 ? 'bad' : 'good'}">${U.wage(Math.abs(L.wageRoom())).replace('/wk', '')}</b><span>${L.wageRoom() < 0 ? 'Over budget' : 'Wage room'}</span></div></div>
-      <div class="card"><h3>Weekly cash flow</h3><div class="chart">${wk.map(w => `<i class="${weeks[w] < 0 ? 'neg' : ''}" style="height:${(Math.abs(weeks[w]) / wmax) * 100}%" title="${U.money(weeks[w])}"></i>`).join('') || '<span class="tiny muted">Play a week to see your cash flow.</span>'}</div></div>
-      <div class="card"><h3>Season ${G.season} so far<span class="grow"></span><span class="tag ${totIn + totOut >= 0 ? 't-good' : 't-bad'}">${U.money(totIn + totOut)}</span></h3><div class="kicker mb8">Income</div>${inc.map(line).join('')}<div class="kicker mt8 mb8">Spending</div>${exp.map(line).join('')}</div>
-      <div class="card"><h3>🎟️ Ticket price</h3><div class="flex between"><span class="small muted">Higher prices earn more per fan but fill fewer seats.</span><b class="money" id="tixLbl">$${u.fin.ticket}</b></div><input type="range" min="${u.tier === 0 ? 15 : 8}" max="${u.tier === 0 ? 80 : 40}" value="${u.fin.ticket}" data-in="ticket" data-ch="ticketSave"></div>
-      <div class="card"><h3>Ledger</h3>${recent.map(e => `<div class="flex between small" style="padding:4px 0;border-bottom:1px solid var(--line)"><span class="grow ellip">${esc(e.label)}</span><span class="tiny dim">${L.dateStr(e.d, true)}</span><b class="${e.amt < 0 ? 'bad' : 'good'}" style="min-width:64px;text-align:right">${e.amt > 0 ? '+' : ''}${U.money(e.amt)}</b></div>`).join('') || '<div class="empty small">No transactions yet.</div>'}</div>`;
+    Fin.ensure();
+    const tab = S.finTab || 'summary';
+    const body = { summary: finSummary, weekly: () => finFlow('week'), monthly: () => finFlow('month'), matchday: finMatchday, sponsors: finSponsors }[tab] || finSummary;
+    const offers = G.spon.offers.length;
+    return `<div class="opts mb12">${FIN_TABS.map(([v, l]) => `<button class="${tab === v ? 'on' : ''}" data-a="finTab" data-v="${v}">${l}${v === 'sponsors' && offers ? ` <b class="good">${offers}</b>` : ''}</button>`).join('')}</div>${body()}`;
   }
-  A.ticket = v => { L.user().fin.ticket = +v; const el = document.getElementById('tixLbl'); if (el) el.textContent = `$${v}`; };
+  A.finTab = v => { S.finTab = v; S.finSel = null; S.finPage = null; UI.render(); };
+  const sign = x => (x > 0 ? '+' : '') + U.money(x);
+  // bank, total wage bill and what's left of the wage budget: computed fresh on every render
+  function finKV() {
+    const u = L.user(), room = L.wageRoom(), bill = L.payroll(u) + L.staffWages();
+    return `<div class="kv mb12"><div><b class="${u.fin.bal < 0 ? 'bad' : ''}">${U.money(u.fin.bal)}</b><span>Bank</span></div><div><b>${U.wage(bill).replace('/wk', '')}</b><span>Wages/wk (incl. staff)</span></div><div><b id="wroom" class="${room < 0 ? 'bad' : 'good'}">${U.wage(Math.abs(room)).replace('/wk', '')}</b><span id="wroomL">${room < 0 ? 'Over budget' : 'Wage room'}</span></div></div>`;
+  }
+  function finSummary() {
+    const u = L.user(), s = G.finSeason, f = Fin.forecast(u);
+    const row = (l, v, cls = '') => `<div class="frow ${cls}"><span>${l}</span><b class="${v < 0 ? 'bad' : cls && v > 0 ? 'good' : ''}">${sign(v)}</b></div>`;
+    const net = f.income - f.out;
+    const totIn = U.sum(Fin.INC.map(k => Math.max(0, s[k] || 0))), totOut = U.sum(Fin.EXP.map(k => Math.min(0, s[k] || 0)));
+    const cats = Fin.INC.concat(Fin.EXP).filter(k => s[k]);
+    const max = Math.max(1, ...cats.map(k => Math.abs(s[k])));
+    const line = k => `<div class="attr" style="grid-template-columns:140px 1fr 64px"><span class="small">${Fin.CAT[k]}</span><div class="bar"><i style="width:${(Math.abs(s[k]) / max) * 100}%;${s[k] < 0 ? 'background:var(--bad)' : ''}"></i></div><b class="small ${s[k] < 0 ? 'bad' : ''}" style="font-size:13px">${U.money(s[k])}</b></div>`;
+    return finKV() + `<div class="card"><h3>📅 A typical week<span class="grow"></span><span class="tag ${net >= 0 ? 't-good' : 't-bad'}">${sign(net)}/wk</span></h3><p class="tiny muted" style="margin-top:-6px">What the club should earn and spend in a normal week at today's prices and deals (prize money and transfers not included). Your wage room is 68% of this income, minus the wages you already pay to players and staff.</p>
+      ${row('Broadcast', f.tv)}${row('Sponsors', f.spon)}${row('Merch & commercial', f.merch)}${row(`Gate (${f.att.toLocaleString()} fans, a home game every 2 wks)`, f.gate)}${f.extras ? row('Concessions & hospitality', f.extras) : ''}${row('Income', f.income, 'tot')}
+      <div class="mt8"></div>${row('Player wages', -f.wages)}${row('Staff wages', -f.staff)}${row('Running costs', -f.ops)}${row('Costs', -f.out, 'tot')}</div>
+      <div class="card"><h3>Season ${G.season} so far<span class="grow"></span><span class="tag ${totIn + totOut >= 0 ? 't-good' : 't-bad'}">${U.money(totIn + totOut)}</span></h3>${cats.length ? cats.map(line).join('') : '<div class="tiny muted">Nothing yet.</div>'}</div>
+      <div class="card"><h3>Ledger</h3>${G.finLog.slice(0, 40).map(e => `<div class="flex between small" style="padding:4px 0;border-bottom:1px solid var(--line)"><span class="grow ellip">${esc(e.label)}</span><span class="tiny dim">${L.dateStr(e.d, true)}</span><b class="${e.amt < 0 ? 'bad' : 'good'}" style="min-width:64px;text-align:right">${sign(e.amt)}</b></div>`).join('') || '<div class="empty small">No transactions yet.</div>'}</div>`;
+  }
+
+  // ── income vs expenses, by week or by month ──
+  function niceMax(v) { const e = Math.pow(10, Math.floor(Math.log10(v))); return [1, 2, 2.5, 5, 10].map(m => m * e).find(m => m >= v) || v; }
+  // a bar with rounded top corners, square on the baseline
+  function barPath(x, y0, w, h) {
+    if (h <= 0.5) return '';
+    const r = Math.min(3, w / 2, h);
+    return `M${x},${y0}V${y0 - h + r}Q${x},${y0 - h} ${x + r},${y0 - h}H${x + w - r}Q${x + w},${y0 - h} ${x + w},${y0 - h + r}V${y0}Z`;
+  }
+  function flowChart(list, sel) {
+    const W = 340, H = 176, L0 = 40, R = 4, T = 10, B = 22, ih = H - T - B, n = list.length;
+    const top = niceMax(Math.max(0.05, ...list.map(p => Math.max(p.inc, p.exp))));
+    const gw = (W - L0 - R) / n, bw = Math.min(11, Math.max(3, gw * 0.34));
+    const y = v => T + ih - (v / top) * ih;
+    let g = '';
+    for (let i = 0; i <= 4; i++) { const v = (top * i) / 4, yy = y(v); g += `<line class="grid" x1="${L0}" x2="${W - R}" y1="${yy}" y2="${yy}"/><text x="${L0 - 5}" y="${yy + 3}" text-anchor="end">${v ? U.money(v) : '0'}</text>`; }
+    const every = Math.ceil(n / 7);
+    list.forEach((p, i) => {
+      const x = L0 + i * gw, cx = x + gw / 2;
+      if (i === sel) g += `<rect class="selbg" x="${x + 1}" y="${T}" width="${gw - 2}" height="${ih}" rx="4"/>`;
+      g += `<path d="${barPath(cx - bw - 1, T + ih, bw, (p.inc / top) * ih)}" fill="var(--good)"/><path d="${barPath(cx + 1, T + ih, bw, (p.exp / top) * ih)}" fill="var(--bad)"/>`;
+      if (i % every === 0 || i === sel) g += `<text x="${cx}" y="${H - 7}" text-anchor="middle" style="${i === sel ? 'fill:var(--text);font-weight:700' : ''}">${p.label}</text>`;
+      g += `<rect class="hit" data-a="finSel" data-v="${i}" x="${x}" y="0" width="${gw}" height="${H}"><title>${p.label}: in ${U.money(p.inc)}, out ${U.money(p.exp)}</title></rect>`;
+    });
+    g += `<line x1="${L0}" x2="${W - R}" y1="${T + ih}" y2="${T + ih}" stroke="var(--line-strong)"/>`;
+    return `<svg class="fchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Income and expenses per period">${g}</svg>`;
+  }
+  function finFlow(by) {
+    const seasons = Object.keys(G.finHist || {}).map(Number).sort((a, b) => b - a);
+    const season = S.finSeasonSel && seasons.includes(S.finSeasonSel) ? S.finSeasonSel : G.season;
+    const all = Fin.periods(season, by);
+    // weeks come in pages of 13 (half a season) so the bars stay readable
+    let page = 0, pages = 1, list = all, off = 0;
+    if (by === 'week') {
+      pages = Math.max(1, Math.ceil(all.length / 13));
+      page = S.finPage != null ? Math.min(S.finPage, pages - 1) : pages - 1;
+      off = page * 13; list = all.slice(off, off + 13);
+    }
+    const seasonBtns = seasons.length > 1 ? `<div class="chips mb8">${seasons.map(x => `<button class="chip${x === season ? ' on' : ''}" data-a="finSeason" data-v="${x}">Season ${x}</button>`).join('')}</div>` : '';
+    if (!list.length) return finKV() + seasonBtns + '<div class="empty">No money has moved yet this season.</div>';
+    const sel = S.finSel != null && S.finSel < list.length ? S.finSel : list.length - 1;
+    const p = list[sel], unit = by === 'week' ? 'week' : 'month';
+    const avgIn = U.avg(all.map(x => x.inc)), avgOut = U.avg(all.map(x => x.exp));
+    const cats = Object.entries(p.cats).filter(([, v]) => Math.abs(v) >= 0.0005).sort((a, b) => b[1] - a[1]);
+    const pager = pages > 1 ? `<div class="flex between mt8"><button class="btn xs ${page === 0 ? 'off' : ''}" data-a="finPage" data-v="${page - 1}">◀ Earlier</button><span class="tiny muted">Weeks ${off + 1}–${off + list.length}</span><button class="btn xs ${page >= pages - 1 ? 'off' : ''}" data-a="finPage" data-v="${page + 1}">Later ▶</button></div>` : '';
+    return finKV() + seasonBtns + `<div class="card"><h3>${by === 'week' ? 'Weekly' : 'Monthly'} income vs expenses</h3>
+      <div class="fleg mb8"><span><i style="background:var(--good)"></i>Income</span><span><i style="background:var(--bad)"></i>Expenses</span><span class="grow"></span><span class="tiny dim">Tap a bar for details</span></div>
+      ${flowChart(list, sel)}${pager}
+      <div class="flex between tiny muted mt8"><span>Season average per ${unit}</span><span><b class="good">${U.money(avgIn)}</b> in · <b class="bad">${U.money(avgOut)}</b> out</span></div></div>
+      <div class="card"><h3>${by === 'week' ? `Week ${p.key + 1}` : p.label} · ${L.dateStr(p.from, true)}–${L.dateStr(p.to, true)}<span class="grow"></span><span class="tag ${p.inc - p.exp >= 0 ? 't-good' : 't-bad'}">${sign(p.inc - p.exp)}</span></h3>
+        ${cats.map(([k, v]) => `<div class="frow"><span>${Fin.CAT[k] || k}</span><b class="${v < 0 ? 'bad' : 'good'}">${sign(v)}</b></div>`).join('') || '<div class="tiny muted">Nothing moved.</div>'}
+        <div class="frow tot"><span>In ${U.money(p.inc)} · Out ${U.money(p.exp)}</span><b class="${p.inc - p.exp < 0 ? 'bad' : 'good'}">${sign(p.inc - p.exp)}</b></div></div>`;
+  }
+  A.finSel = v => { S.finSel = +v; UI.render(); };
+  A.finPage = v => { S.finPage = Math.max(0, +v); S.finSel = null; UI.render(); };
+  A.finSeason = v => { S.finSeasonSel = +v; S.finSel = null; S.finPage = null; UI.render(); };
+
+  // ── match day: the ticket sweet spot and stadium extras ──
+  function ticketChart(c, price) {
+    const W = 340, H = 124, L0 = 8, R = 8, T = 18, B = 18, ih = H - T - B;
+    const top = Math.max(...c.pts.map(p => p.total)) * 1.08;
+    const p0 = c.pts[0].p, p1 = c.pts[c.pts.length - 1].p;
+    const x = p => L0 + ((p - p0) / (p1 - p0)) * (W - L0 - R);
+    const y = v => T + ih - (v / top) * ih;
+    const path = c.pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.p).toFixed(1)},${y(p.total).toFixed(1)}`).join('');
+    const cur = c.pts.find(p => p.p === price) || c.best;
+    const mid = Math.min(W - 70, Math.max(70, (x(c.lo) + x(c.hi)) / 2));
+    let g = `<rect x="${x(c.lo)}" y="${T}" width="${Math.max(3, x(c.hi) - x(c.lo))}" height="${ih}" fill="var(--good)" opacity=".16" rx="4"/>`;
+    g += `<text x="${mid}" y="${T - 6}" text-anchor="middle" style="fill:var(--good);font-weight:700">sweet spot $${c.lo}–$${c.hi}</text>`;
+    g += `<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+    g += `<line x1="${x(cur.p)}" x2="${x(cur.p)}" y1="${T}" y2="${T + ih}" stroke="var(--text)" stroke-dasharray="3 3" opacity=".55"/><circle cx="${x(cur.p)}" cy="${y(cur.total)}" r="5" fill="var(--text)" stroke="var(--surface)" stroke-width="2"/>`;
+    g += `<line x1="${L0}" x2="${W - R}" y1="${T + ih}" y2="${T + ih}" stroke="var(--line-strong)"/><text x="${L0}" y="${H - 4}">$${p0}</text><text x="${W - R}" y="${H - 4}" text-anchor="end">$${p1}</text><text x="${W / 2}" y="${H - 4}" text-anchor="middle">price → match-day income per home game</text>`;
+    return `<svg class="fchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Match-day income at each ticket price">${g}</svg>`;
+  }
+  function ticketLive(c, price) {
+    const cur = c.pts.find(p => p.p === price) || c.best, fill = Math.round((cur.att / c.cap) * 100);
+    const verdict = price < c.lo ? `<span class="warn">Below the sweet spot:</span> the ground ${fill >= 99 ? 'sells out' : 'fills up'}, but you're leaving money on the table.` : price > c.hi ? `<span class="bad">Too pricey:</span> the empty seats cost more than the higher price earns, and fans may protest.` : '<span class="good">In the sweet spot.</span>';
+    const room = L.wageRoom();
+    return `<div class="small mt8">${verdict}</div><div class="frow mt4"><span>Expected crowd</span><b>${cur.att.toLocaleString()} (${fill}%)</b></div><div class="frow"><span>Gate per home game</span><b>${U.money(cur.gate)}</b></div><div class="frow"><span>With food, drink & boxes</span><b>${U.money(cur.total)}</b></div><div class="frow"><span>Best price</span><b>$${c.best.p} → ${U.money(c.best.total)}</b></div><div class="frow"><span>Wage room at this price</span><b class="${room < 0 ? 'bad' : 'good'}">${room < 0 ? '−' : ''}${U.wage(Math.abs(room))}</b></div>`;
+  }
+  function finMatchday() {
+    const u = L.user(), c = Fin.ticketCurve(u), [lo, hi] = Fin.ticketRange(u), b = Fin.biz(u);
+    const item = kind => {
+      const d = Fin.BIZ[kind], lv = b[kind] || 0, cost = Fin.bizCost(kind);
+      return `<div class="deal"><div class="ic">${d.icon}</div><div class="grow"><div class="bold small">${d.name} <span class="tiny dim">${'●'.repeat(lv)}${'○'.repeat(d.max - lv)}</span></div><div class="tiny muted">${lv ? 'Now: ' + d.desc(lv, u) : 'Not built yet.'}${lv < d.max ? `<br>Next level: ${d.desc(lv + 1, u)}` : ''}</div></div>${cost ? `<button class="btn xs primary ${u.fin.bal < cost ? 'off' : ''}" data-a="buyBiz" data-v="${kind}">${U.money(cost)}</button>` : '<span class="tag t-good">Max</span>'}</div>`;
+    };
+    const sc = L.upgradeCost('stadium');
+    return finKV() + `<div class="card"><h3>🎟️ Ticket price<span class="grow"></span><b class="money" id="tixLbl">$${u.fin.ticket}</b></h3>
+      <div class="tiny muted mb8">Against a typical league visitor at today's form. Big cup and European nights draw bigger crowds; bad weather draws smaller ones.</div>
+      <div id="tixChart">${ticketChart(c, u.fin.ticket)}</div>
+      <input type="range" min="${lo}" max="${hi}" value="${u.fin.ticket}" data-in="ticket" data-ch="ticketSave" style="width:100%">
+      <div id="tixLive">${ticketLive(c, u.fin.ticket)}</div></div>
+      ${pitchCard(u)}
+      <div class="card"><h3>🏟️ Stadium & commercial</h3><p class="tiny muted" style="margin-top:-6px">Build once, earn for good. Better concourses and boxes also move your ticket sweet spot.</p>
+        ${Object.keys(Fin.BIZ).map(item).join('')}
+        <div class="deal"><div class="ic">🏗️</div><div class="grow"><div class="bold small">Stadium expansion</div><div class="tiny muted">${u.stadium.cap.toLocaleString()} seats now · +5,000 seats</div></div><button class="btn xs primary ${u.fin.bal < sc ? 'off' : ''}" data-a="upgrade" data-v="stadium">${U.money(sc)}</button></div></div>`;
+  }
+  function pitchCard(u) {
+    const v = Xtra.pitch(u), lbl = Xtra.pitchLabel(v), col = v >= 70 ? 'var(--good)' : v >= 40 ? 'var(--warn)' : 'var(--bad)';
+    const heat = (u.biz && u.biz.heating) || 0;
+    return `<div class="card"><h3>🌱 Pitch condition<span class="grow"></span><span class="tag" style="color:${col}">${lbl} · ${Math.round(v)}%</span></h3><div class="prog"><i style="width:${v}%;background:${col}"></i></div>
+      <p class="tiny muted mt8">Every home game wears it, and rain, storms and snow do real damage; it grows back a little each day. Below 70% the ball bobbles (heavier touches, wilder passes); below 40% players start getting hurt on it. Snow can freeze an unheated pitch and get the game postponed, so the fixtures pile up.</p>
+      <div class="tiny ${heat ? 'good' : 'warn'}">${heat >= 2 ? '♨️ Undersoil heating and drainage installed.' : heat ? '♨️ Undersoil heating installed: no frozen-pitch postponements.' : '⚠️ No undersoil heating: winter games can be called off.'}</div></div>`;
+  }
+  // the slider redraws its chart, the projections and the wage room as it moves
+  A.ticket = v => {
+    const u = L.user();
+    u.fin.ticket = +v;
+    const c = Fin.ticketCurve(u), set = (id, h) => { const el = document.getElementById(id); if (el) el.innerHTML = h; };
+    set('tixLbl', `$${v}`);
+    set('tixChart', ticketChart(c, +v));
+    set('tixLive', ticketLive(c, +v));
+    const room = L.wageRoom(), wr = document.getElementById('wroom');
+    if (wr) { wr.textContent = U.wage(Math.abs(room)).replace('/wk', ''); wr.className = room < 0 ? 'bad' : 'good'; set('wroomL', room < 0 ? 'Over budget' : 'Wage room'); }
+  };
   A.ticketSave = () => L.save();
+  A.buyBiz = v => { const r = Fin.buyBiz(v); if (r.ok) { Sfx.play('cash'); UI.toast(`🏗️ ${Fin.BIZ[v].name} upgraded`); } else UI.toast(esc(r.why)); UI.render(); };
+
+  // ── sponsors ──
+  function finSponsors() {
+    const u = L.user(), SP = G.spon, total = U.sum(Object.values(SP.deals).filter(Boolean).map(d => d.wk));
+    const deal = slot => {
+      const sl = Fin.SLOTS[slot], d = SP.deals[slot];
+      const locked = slot === 'sleeve' && u.rep < 35;
+      return `<div class="deal"><div class="ic">${d ? d.icon : sl.icon}</div><div class="grow"><div class="tiny dim">${sl.name}</div><div class="bold small">${d ? esc(d.brand) : locked ? 'Needs club reputation 35' : '<span class="warn">Empty: offers on the way</span>'}</div>${d ? `<div class="tiny muted">${U.money(d.wk)}/wk${d.win ? ` + ${U.money(d.win)} per win` : ''} · ${d.until <= G.season ? '<span class="warn">ends this summer</span>' : `until the end of season ${d.until}`}</div>` : `<div class="tiny muted">Worth about ${U.money(Fin.fair(slot))}/wk to a club like yours</div>`}</div></div>`;
+    };
+    const offer = o => {
+      const cur = SP.deals[o.slot], early = cur && cur.until > G.season;
+      return `<div class="deal"><div class="ic">${o.icon}</div><div class="grow"><div class="tiny dim">${Fin.SLOTS[o.slot].name} · answer by ${L.dateStr(o.exp, true)}</div><div class="bold small">${esc(o.brand)}</div><div class="tiny muted">${Fin.dealText(o)}${o.renew ? `<br>Renewal: ${U.money(cur.wk)}/wk now` : cur ? `<br>Replaces ${esc(cur.brand)} (${U.money(cur.wk)}/wk)${early ? ` · ${U.money(Fin.buyout(cur))} to end it early` : ''}` : ''}</div></div><div class="flex" style="flex-direction:column;gap:4px"><button class="btn xs primary" data-a="sponAccept" data-v="${o.id}">Accept</button><button class="btn xs" data-a="sponDecline" data-v="${o.id}">Decline</button></div></div>`;
+    };
+    const tierName = u.rep >= 75 ? 'Global brands' : u.rep >= 50 ? 'National brands' : 'Local businesses';
+    return finKV() + `<div class="card"><h3>🤝 Sponsorship<span class="grow"></span><span class="tag t-good">${U.money(total)}/wk</span></h3>
+      <div class="small muted">Club reputation <b>${u.rep}</b> · ${tierName} are interested.</div><div class="prog mt8"><i style="width:${u.rep}%"></i></div>
+      <p class="tiny dim mt8">Sponsors pay more as your reputation grows and you climb the table. Every 3-point rise in reputation brings a fresh call, empty slots fill fast, and deals in their last season get renewal offers. Win-bonus deals pay out on every competitive win.</p></div>
+      ${SP.offers.length ? `<div class="card" style="border-color:rgba(34,197,94,.45)"><h3>📨 Offers on the table</h3>${SP.offers.map(offer).join('')}</div>` : ''}
+      <div class="card"><h3>Current deals</h3>${Fin.SLOT_IDS.map(deal).join('')}</div>`;
+  }
+  A.sponAccept = v => { const r = Fin.accept(+v); UI.toast(esc(r.ok ? r.text : r.why)); if (r.ok) Sfx.play('cash'); UI.render(); };
+  A.sponDecline = v => { Fin.decline(+v); UI.render(); };
   const ROLE_NAME = { ast: 'Assistant manager', fit: 'Fitness coach', yth: 'Youth coach', sct: 'Scout' };
   const ROLE_DESC = { ast: 'Better training growth for the first team', fit: 'Faster fitness recovery between games', yth: 'Faster academy growth and better intakes', sct: 'Shorter, sharper scouting trips' };
   function staff() {
@@ -207,18 +355,65 @@
       + item('academy', '🎓 Academy', 'Better youth intakes and faster development. Higher levels attract wonderkids.', `${'★'.repeat(u.acad.level)}${'☆'.repeat(5 - u.acad.level)}`);
   }
   A.upgrade = v => { if (L.upgrade(v)) { Sfx.play('cash'); UI.toast('🏗️ Upgrade complete'); UI.render(); } else UI.toast('Not enough money (or already maxed).'); };
+  // ── kit & badge studio: the base designs, plus the ones earned through milestones ──
+  function studio() {
+    const u = L.user(), earned = Xtra.UNLOCKS.filter(x => Xtra.has(x.id)).length;
+    const row = (kind, cur) => `<div class="chips" style="flex-wrap:wrap">${Xtra.options(kind).map(o => o.locked
+      ? `<button class="chip" style="opacity:.5" data-a="studioLocked" data-v="${esc(o.how)}">🔒 ${esc(o.name)}</button>`
+      : `<button class="chip${cur === o.id ? ' on' : ''}" data-a="studio" data-v="${kind}:${o.id}">${esc(o.name)}</button>`).join('')}</div>`;
+    const sw = (field, cur) => `<div class="flex wrap" style="gap:6px">${DATA.PALETTE.map(col => `<button data-a="studio" data-v="${field}:${col}" aria-label="${col}" style="width:28px;height:28px;border-radius:9px;background:${col};box-shadow:${cur === col ? '0 0 0 3px var(--bg),0 0 0 5px var(--accent-2)' : 'inset 0 0 0 1px rgba(255,255,255,.2)'}"></button>`).join('')}</div>`;
+    const gold = Xtra.has('gold');
+    return `<div class="card"><h3>🎨 Kit & badge studio<span class="grow"></span><span class="tag">${earned}/${Xtra.UNLOCKS.length} earned</span></h3>
+      <div class="flex" style="gap:16px;justify-content:center">${UI.crest(u, 92)}${Art.kit(u.kit, 80, 10)}${Art.kit(u.away, 56, 10)}</div>
+      <div class="kicker mt12 mb8">Shirt pattern</div>${row('style', u.kit.style)}
+      <div class="kicker mt8 mb8">Badge shape</div>${row('shape', u.crest.shape)}
+      <div class="kicker mt8 mb8">Badge emblem</div>${row('icon', u.crest.icon)}
+      <div class="kicker mt8 mb8">Badge trim</div><div class="chips">${gold ? `<button class="chip${u.crest.trim === 'gold' ? ' on' : ''}" data-a="studio" data-v="trim:gold">✨ Gold trim</button>` : `<button class="chip" style="opacity:.5" data-a="studioLocked" data-v="${esc(Xtra.UNLOCKS.find(x => x.id === 'gold').how)}">🔒 Gold trim</button>`}</div>
+      <div class="kicker mt12 mb8">Home colours</div>${sw('c1', u.kit.c1)}<div class="mt8"></div>${sw('c2', u.kit.c2)}
+      <div class="kicker mt12 mb8">Shorts</div>${sw('shorts', u.kit.c3)}
+      <div class="kicker mt12 mb8">Still to earn</div>${Xtra.UNLOCKS.filter(x => !Xtra.has(x.id)).map(x => `<div class="frow"><span>🔒 ${esc(x.name)}</span><span class="tiny muted">${esc(typeof x.how === 'function' ? x.how() : x.how)}</span></div>`).join('') || '<div class="tiny good">Everything unlocked. A true club legend.</div>'}</div>`;
+  }
+  A.studio = v => { const i = v.indexOf(':'); const r = Xtra.design(v.slice(0, i), v.slice(i + 1)); if (!r.ok && r.why) UI.toast(esc(r.why)); UI.render(); };
+  A.studioLocked = v => UI.toast(`🔒 ${esc(v)} to unlock this.`);
   function identity() {
     const u = L.user(), ci = DATA.CLUB_IDS[u.ident], mi = DATA.COACH_IDS[G.mgr.ident];
     const use = G.mgr.usage || {};
     const total = U.sum(Object.values(use)) || 1;
-    return `<div class="card"><h3>Club DNA</h3><div class="flex"><div style="font-size:34px">${ci.icon}</div><div class="grow"><div class="bold">${esc(ci.name)}</div><div class="small muted">${esc(ci.desc)}</div></div></div><p class="tiny dim">Clubs grow into new identities: give academy debuts, score bags of goals, or turn a profit and the fans will start calling you something else.</p></div>
+    return studio() + `<div class="card"><h3>Club DNA</h3><div class="flex"><div style="font-size:34px">${ci.icon}</div><div class="grow"><div class="bold">${esc(ci.name)}</div><div class="small muted">${esc(ci.desc)}</div></div></div><p class="tiny dim">Clubs grow into new identities: give academy debuts, score bags of goals, or turn a profit and the fans will start calling you something else.</p></div>
       <div class="card"><h3>Your philosophy</h3><div class="flex"><div style="font-size:34px">${mi.icon}</div><div class="grow"><div class="bold">${esc(mi.name)}</div><div class="small muted">${esc(mi.desc)}</div></div></div>
       <div class="kicker mt12 mb8">How you've actually played this season</div>${Object.entries(use).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<div class="attr" style="grid-template-columns:130px 1fr 34px"><span class="small">${DATA.COACH_IDS[k].icon} ${esc(DATA.COACH_IDS[k].name)}</span><div class="bar"><i style="width:${(n / total) * 100}%"></i></div><b class="small">${n}</b></div>`).join('') || '<div class="tiny muted">Play some matches.</div>'}<p class="tiny dim">At season's end your label follows the style you used most — and it travels with you to any club you take over.</p></div>
       <div class="card"><h3>All philosophies</h3>${Object.values(DATA.COACH_IDS).map(c => `<div class="row"><div style="font-size:22px">${c.icon}</div><div class="grow"><div class="nm">${esc(c.name)}</div><div class="meta">${esc(c.desc)} <span class="dim">(${c.oop} · ${(c.roles || []).slice(0, 3).map(r => TAC.ROLES[r].short).join(', ') || 'any roles'})</span></div></div></div>`).join('')}</div>`;
   }
+  // a trophy drawn for its competition: league titles in gold, cups in silver, the continental prize with its big ears
+  function trophyArt(kind, size) {
+    const col = { league: ['#fde68a', '#b45309'], league2: ['#e2e8f0', '#64748b'], cup: ['#f1f5f9', '#475569'], cont: ['#fcd34d', '#92400e'], other: ['#fdba74', '#9a3412'] }[kind];
+    // each drawing needs its own gradient id, or every trophy on the page picks up the first one's metal
+    const id = 'tg' + kind + Math.random().toString(36).slice(2, 7);
+    const ears = kind === 'cont' ? `<path d="M24 22 C2 22 2 54 30 50 M76 22 C98 22 98 54 70 50" fill="none" stroke="url(#${id})" stroke-width="7"/>` : kind === 'cup' ? `<path d="M28 24 C12 24 12 44 32 44 M72 24 C88 24 88 44 68 44" fill="none" stroke="url(#${id})" stroke-width="5"/>` : '';
+    const body = kind === 'league2' ? `<path d="M30 18 H70 L64 52 H36 Z" fill="url(#${id})"/>` : `<path d="M26 14 H74 V28 C74 46 64 56 50 58 C36 56 26 46 26 28 Z" fill="url(#${id})"/>`;
+    const lid = kind === 'league' ? `<path d="M38 14 Q50 2 62 14 Z" fill="url(#${id})"/><circle cx="50" cy="5" r="3.5" fill="url(#${id})"/>` : '';
+    return `<svg viewBox="0 0 100 100" width="${size}" height="${size}"><defs><linearGradient id="${id}" x1="0" x2="1"><stop offset="0" stop-color="${col[1]}"/><stop offset=".45" stop-color="${col[0]}"/><stop offset="1" stop-color="${col[1]}"/></linearGradient></defs>${ears}${lid}${body}<rect x="44" y="56" width="12" height="16" fill="url(#${id})"/><path d="M30 72 H70 L74 92 H26 Z" fill="#3f2a1d"/><rect x="34" y="78" width="32" height="6" rx="1" fill="url(#${id})" opacity=".8"/></svg>`;
+  }
+  function trophyKind(name) {
+    if (name === DATA.CONTINENTAL) return 'cont';
+    if (DATA.NATIONS.some(n => n.cup === name)) return 'cup';
+    if (DATA.NATIONS.some(n => n.tiers[0] === name)) return 'league';
+    if (DATA.NATIONS.some(n => n.tiers[1] === name)) return 'league2';
+    return 'other';
+  }
   function trophies() {
-    const u = L.user();
-    return `<div class="card"><h3>🏆 ${esc(u.name)} trophy cabinet</h3>${u.trophies.length ? u.trophies.slice().reverse().map(t => `<div class="row"><div style="font-size:24px">🏆</div><div class="grow"><div class="nm">${esc(t.name)}</div><div class="meta">Season ${t.s} · ${t.y}</div></div></div>`).join('') : '<div class="empty small">The cabinet is empty. For now.</div>'}</div>
+    const u = L.user(), tours = (u.biz && u.biz.tours) || 0;
+    const groups = {};
+    for (const t of u.trophies) (groups[t.name] = groups[t.name] || []).push(t);
+    const order = ['cont', 'league', 'cup', 'league2', 'other'];
+    const shelf = Object.entries(groups).sort((a, b) => order.indexOf(trophyKind(a[0])) - order.indexOf(trophyKind(b[0])));
+    const gots = (G.gotsHist || []).filter(x => x.club === u.name).slice().reverse();
+    const legends = L.squad(u).filter(p => p.car && p.car.gp >= 20).sort((a, b) => (b.car.g * 2 + b.car.a + b.car.motm) - (a.car.g * 2 + a.car.a + a.car.motm)).slice(0, 5);
+    return `<div class="card museum"><h3>🏛️ ${esc(u.name)} museum</h3>
+      <div class="tiny muted" style="margin-top:-6px">${tours ? `Open to the public: ${tours > 1 ? 'guided tours and a stadium walk' : 'tours run every day'}. Every trophy here brings in more visitors.` : 'Build Museum & stadium tours (Finance → Matchday) to open this to paying fans.'}</div>
+      <div class="cabinet mt8">${shelf.length ? shelf.map(([name, list]) => `<div class="tro">${trophyArt(trophyKind(name), 64)}${list.length > 1 ? `<span class="cnt">×${list.length}</span>` : ''}<b>${esc(name)}</b><span>${list.map(t => t.y).join(', ')}</span></div>`).join('') : '<div class="empty small" style="grid-column:1/-1">The cabinet is empty. For now.</div>'}</div></div>
+      <div class="card"><h3>⚽ Goal of the Season</h3>${gots.length ? gots.map(x => `<div class="row"><div style="font-size:22px">🥇</div><div class="grow"><div class="nm">${esc(x.name)}</div><div class="meta">Season ${x.s}: ${esc(x.desc)}${x.opp ? ` vs ${esc(x.opp)}` : ''}</div></div></div>`).join('') : '<div class="tiny muted">At the end of each season, your three best goals go to a vote. The winners hang here.</div>'}</div>
+      ${legends.length ? `<div class="card"><h3>⭐ Club greats in the squad</h3>${legends.map(p => UI.playerRow(p, { meta: `${p.car.gp} games · ${p.car.g} goals · ${p.car.a} assists${p.gots ? ` · 🥇×${p.gots}` : ''}` })).join('')}</div>` : ''}
       <div class="card"><h3>📈 League history</h3>${u.hist.length ? u.hist.slice().reverse().map(h => `<div class="flex between small" style="padding:4px 0"><span>Season ${h.s} · ${esc(L.league(h.lg).name)}</span><b>${U.ord(h.pos)} · ${h.pts} pts</b></div>`).join('') : '<div class="empty small">First season in progress.</div>'}</div>
       <button class="btn block" data-a="achSheet">${I.trophy} Achievements</button>`;
   }

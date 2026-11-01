@@ -97,6 +97,8 @@ const Engine = (() => {
       this.reset = null;
       this.wall = null;
       this.goalsBy = new Map();
+      // every goal with how it was scored (for highlights and Goal of the Season)
+      this.goalLog = [];
       const c = this.cfg, center = vec(c.L / 2, c.W / 2);
       this.ball = {
         pos: { ...center }, prevPos: { ...center }, vel: vec(), z: 0, vz: 0, prevZ: 0, spin: 0,
@@ -439,6 +441,7 @@ const Engine = (() => {
         if (this.phase !== 'play') return;
       }
       for (const p of this.onPitch) this.move(p);
+      this.aerialJumps();
       this.collide();
       this.updateBall();
       if (this.phase === 'play' && b.owner !== null) this.resolveChallenges();
@@ -1338,6 +1341,38 @@ const Engine = (() => {
       b.owner = null; b.vel = vel; b.vz = vz; b.z = vz > 0 ? 0.05 : 0;
       b.receiver = p.id; b.passer = null; b.fumbler = null; b.noTouchTimer = 0; b.lofted = false; b.cross = false; b.curl = 0; b.shot = null; b.offside = null; b.self = true; b.lastTeam = p.team; b.power = 0;
     }
+    // where the ball sits relative to the carrier through a move (off: metres, z: height, roll: extra spin)
+    skillBall(s) {
+      const f = clamp(s.t / s.dur, 0, 1), F = s.fwd, Lt = s.lat, sd = s.side;
+      const at = (fw, lt) => add(scale(F, fw), scale(Lt, lt));
+      const ease = x => x * x * (3 - 2 * x);
+      switch (s.id) {
+        // the ball sits still while the feet circle it
+        case 'stepover': return { off: at(0.5, -0.06 * Math.sin(f * Math.PI * 4)), z: 0, roll: 2 };
+        case 'bodyfeint': return { off: at(0.5, f < 0.45 ? -0.12 * ease(f / 0.45) : 0.18), z: 0, roll: 1 };
+        // a quick tap across, inside foot to inside foot
+        case 'croqueta': return { off: at(0.4, f < 0.25 ? -0.3 : f < 0.5 ? -0.3 + 0.7 * ease((f - 0.25) / 0.25) : 0.4), z: 0, roll: 6 };
+        // pushed out with the outside, snapped back with the inside
+        case 'elastico': return { off: at(0.45, f < 0.3 ? -0.5 * ease(f / 0.3) : f < 0.5 ? -0.5 + 1 * ease((f - 0.3) / 0.2) : 0.5), z: 0, roll: 9 };
+        // dragged behind the standing leg, then away
+        case 'hocus': return { off: f < 0.45 ? at(0.5 - 0.7 * ease(f / 0.45), -0.35 * Math.sin(Math.PI * f / 0.45)) : at(-0.2 + 0.8 * ease((f - 0.45) / 0.55), 0.45), z: 0, roll: 8 };
+        // rolled round the body with the sole
+        case 'roulette': { const a = sd * Math.PI * 2 * ease(f); return { off: rot(scale(F, 0.5), a), z: 0, roll: 5 }; }
+        // keepie-up while the foot goes round it
+        case 'lacroix': { const a = sd * Math.PI * 2 * ease(f); return { off: rot(scale(F, 0.42), a * 0.5), z: 0.55 * Math.sin(Math.PI * f), roll: 3 }; }
+        // pulled back under the sole, then away at an angle
+        case 'dragback': return { off: f < 0.45 ? at(0.55 - 0.85 * ease(f / 0.45), 0) : at(-0.3 + 0.2 * (f - 0.45), 0.5 * ease((f - 0.45) / 0.55)), z: 0, roll: 7 };
+        // chopped behind the standing leg
+        case 'heelchop': return { off: f < 0.4 ? at(0.5, -0.1) : at(0.5 - 0.9 * ease(Math.min(1, (f - 0.4) / 0.35)), 0.15 + 0.4 * ease(Math.min(1, (f - 0.4) / 0.35))), z: 0, roll: 8 };
+        // shaped one way before it's slid through the legs
+        case 'nutmeg': return { off: at(0.5, -0.18 * Math.sin(Math.PI * Math.min(1, f / 0.42))), z: 0, roll: 4 };
+        // rolled up the back of the leg before the flick
+        case 'rainbow': return { off: at(0.5 - 0.75 * ease(Math.min(1, f / 0.42)), 0), z: 0.35 * ease(Math.min(1, f / 0.42)), roll: 4 };
+        // dinked up off the laces
+        case 'sombrero': return { off: at(0.45, 0), z: 0.5 * Math.sin(Math.PI * Math.min(1, f / 0.42)), roll: 2 };
+        default: return { off: scale(F, 0.6), z: 0, roll: 0 };
+      }
+    }
     // how the carrier moves through a move (desired velocity)
     skillVel(p, s) {
       const f = s.t / s.dur, top = this.maxSpeed(p) * 0.95, F = s.fwd, Lt = s.lat, b = this.ball;
@@ -1357,6 +1392,7 @@ const Engine = (() => {
       const o = this.players[s.o], b = this.ball;
       if (s.ok) {
         this.stats[p.team].skillsOk++; p.ps.skillsOk++;
+        p.lastBeat = this.time;
         o.stun = 0.6 + 0.25 * s.boost + (s.kind === 'spin' || s.kind === 'lift' ? 0.15 : 0);
         o.tackleCd = Math.max(o.tackleCd, o.stun + 0.3);
         // wrong-footed: he lunges the wrong way and ends up facing the wrong way
@@ -1657,7 +1693,8 @@ const Engine = (() => {
       b.spin = (this.rng.next() - 0.5) * 40;
       b.lofted = false; b.cross = false; b.receiver = null; b.passer = null; b.noTouchTimer = 0.3; b.lastTeam = t;
       b.power = power ? 1 : speed > 30 ? 0.5 : 0;
-      b.shot = { team: t, shooter: p.id, outcome, gy, gz, close: dGoal < 12 * c.k, checked: pGoalOverride !== undefined ? this.onPitch.map(q => q.id) : [] };
+      b.shot = { team: t, shooter: p.id, outcome, gy, gz, close: dGoal < 12 * c.k, checked: pGoalOverride !== undefined ? this.onPitch.map(q => q.id) : [],
+        d: +(dGoal / c.k).toFixed(1), header: !!header, sk: power ? 'power' : finesse ? 'curl' : chip ? 'chip' : kind || null, beat: p.lastBeat != null && this.time - p.lastBeat < 4, carry: +(this.time - (p.gotBallAt ?? this.time)).toFixed(1) };
       this.stats[t].shots++;
       this.stats[t].xg += pGoalOverride ?? xg;
       p.ps.shots++;
@@ -1757,11 +1794,36 @@ const Engine = (() => {
         * (this.possession !== p.team ? 1 + 0.15 * ti.pressing : 1) * (1 + 0.12 * ti.tempo) * this.weather.stamina * (side.stamMult || 1) * (1 - 0.2 * this.hm(p, 'engine'));
       p.stamina = Math.max(0.2, p.stamina - drain * TICK);
     }
+    // a high ball coming: anyone it will pass close to jumps so his head (or a keeper's hands) peaks as it arrives
+    aerialJumps() {
+      const b = this.ball;
+      if (b.owner !== null || b.z < 0.5 || (b.vz <= 0 && b.z < 1.2)) return;
+      const v = b.vel, v2 = v.x * v.x + v.y * v.y;
+      if (v2 < 9) return;
+      for (const p of this.onPitch) {
+        if (p.z > 0 || p.down > 0 || p.dive > 0 || p.slide > 0 || p.stun > 0 || this.time < (p.jumpCd || 0)) continue;
+        const rel = sub(p.pos, b.pos), t = (rel.x * v.x + rel.y * v.y) / v2;
+        if (t <= 0 || t > 0.6) continue;
+        const keep = p.isGK && this.inAttackingBox(1 - p.team, p.pos);
+        const miss = len(sub(rel, scale(v, t)));
+        if (miss > (keep ? 1.8 : 1.6)) continue;
+        // how high the ball will be when it gets here, and how high he has to go to meet it
+        const zAt = b.z + b.vz * t - 0.5 * GRAV * t * t, reach = keep ? 2.25 : 1.75;
+        if (zAt < (keep ? 1.6 : 1.3) || zAt > (keep ? 3.6 : 3.4)) continue;
+        const spring = keep ? 0.4 + 0.5 * this.attr(p, 'goalkeeping') / 99 : 0.3 + 0.35 * this.attr(p, 'heading') / 99 + 0.2 * this.attr(p, 'strength') / 99 + 0.12 * this.hm(p, 'tower');
+        const rise = clamp(zAt - reach + 0.1, 0.15, spring);
+        const vz = Math.sqrt(2 * GRAV * rise), tPeak = vz / GRAV;
+        // take off a touch early: you meet it on the way up, never on the way down
+        if (t > tPeak + 0.04) continue;
+        p.z = 0.01; p.vz = vz; p.jumpCd = this.time + 1.2;
+        p.air = keep ? 'catch' : 'head';
+      }
+    }
     stepZ(p) {
       if (p.z > 0 || p.vz > 0) {
         p.vz -= GRAV * TICK;
         p.z += p.vz * TICK;
-        if (p.z <= 0) { p.z = 0; p.vz = 0; }
+        if (p.z <= 0) { p.z = 0; p.vz = 0; p.air = null; }
       }
     }
     clampBody(p, carrying) {
@@ -1833,7 +1895,8 @@ const Engine = (() => {
     // ── ball ──
     stepBallZ() {
       const b = this.ball;
-      if (b.owner !== null) { b.z = 0; b.vz = 0; return; }
+      // an owned ball stays on the grass, except when a move has it popped up off the foot
+      if (b.owner !== null) { if (!this.players[b.owner].skill) b.z = 0; b.vz = 0; return; }
       if (b.z > 0 || b.vz > 0) {
         b.vz -= GRAV * TICK;
         b.z += b.vz * TICK;
@@ -1850,11 +1913,19 @@ const Engine = (() => {
       if (b.owner !== null) {
         const o = this.players[b.owner], sp = len(o.vel);
         const dir = sp > 0.3 ? scale(o.vel, 1 / sp) : norm(sub(this.attackGoal(o.team), o.pos));
-        b.pos = add(o.pos, scale(dir, 0.6));
+        const mv = o.skill && o.skill.kind !== 'dash' ? this.skillBall(o.skill) : null;
+        const want = mv ? mv.off : scale(dir, 0.6);
+        // the ball eases between foot positions instead of teleporting
+        b.off = b.off ? add(b.off, scale(sub(want, b.off), mv ? 0.55 : 0.35)) : want;
+        const prev = b.pos;
+        b.pos = add(o.pos, b.off);
         b.vel = { ...o.vel };
-        b.z = 0; b.vz = 0;
+        b.z = mv ? mv.z : 0; b.vz = 0;
+        // how fast it's being rolled under the foot (only the renderer cares)
+        b.tw = mv ? len(sub(b.pos, prev)) / TICK - sp + mv.roll : 0;
         return;
       }
+      b.off = null; b.tw = 0;
       const from = { ...b.pos };
       const k = b.shot ? SHOT_K : b.lofted ? AIR_K : this.groundK;
       b.pos = add(b.pos, scale(b.vel, TICK));
@@ -2012,8 +2083,10 @@ const Engine = (() => {
       const ballQ = b.cross ? 0.7 + 0.6 * b.crossQuality : 1;
       const attWins = !def || this.rng.chance(clamp(0.5 + (this.aerialScore(att) - this.aerialScore(def)) / 99 + delivery, 0.15, 0.85));
       // both go up: Blitz rules, someone usually ends up on the floor
-      att.z = 0.05; att.vz = 3.2;
-      if (def) { def.z = 0.05; def.vz = 3; }
+      // nobody leaves the ground for one at knee height; a late leap if they didn't go up early
+      const high = b.z > 1.2;
+      if (high && att.z < 0.05) { att.z = 0.05; att.vz = 3.2; att.air = 'head'; }
+      if (def && high && def.z < 0.05) { def.z = 0.05; def.vz = 3; def.air = 'head'; }
       if (attWins) {
         if (def) {
           att.ps.aerials++;
@@ -2187,6 +2260,8 @@ const Engine = (() => {
       for (const p of this.onPitch) if (p.team !== team && !p.isGK) p.ps.conceded++;
       this.emit('goal', team, `${text} · ${this.teams[0].short} ${this.score[0]}-${this.score[1]} ${this.teams[1].short}`, { pid: scorer && scorer.team === team ? scorer.data.id : null, apid: assist ? assist.data.id : null, score: [...this.score] });
       this.effect('goal', b.pos, team, { pid: scorer ? scorer.data.id : null });
+      const sh = b.shot && b.shot.shooter === (scorer && scorer.id) ? b.shot : null;
+      this.goalLog.push({ team, pid: scorer && scorer.team === team ? scorer.data.id : null, apid: assist ? assist.data.id : null, og: !(scorer && scorer.team === team), min: this.minute, t: this.time, d: sh ? sh.d : null, header: sh ? sh.header : false, sk: sh ? sh.sk : null, beat: sh ? sh.beat : false, carry: sh ? sh.carry : 0 });
       this.momentum = clamp(this.momentum + (team === 0 ? 0.5 : -0.5), -1, 1);
       b.shot = null; b.curl = 0;
       b.vel = scale(b.vel, 0.15);
@@ -2507,7 +2582,7 @@ const Engine = (() => {
       if (r.type === 'penalty') {
         const kp = this.keeper(1 - r.team);
         const pGoal = clamp(0.62 + (0.25 * this.attr(taker, 'finishing')) / 99 + (0.08 * this.attr(taker, 'composure')) / 99 + 0.04 * this.hm(taker, 'icevein') - (kp ? (0.17 * this.attr(kp, 'goalkeeping')) / 99 : 0), 0.5, 0.93);
-        this.shoot(taker, 0.76, false, pGoal);
+        this.shoot(taker, 0.76, false, pGoal, 1, 'pen');
       } else if (r.direct) {
         // over the wall and into the corner — or a clever short one
         const curve = this.attr(taker, 'curve') / 99, fin = this.attr(taker, 'finishing') / 99;

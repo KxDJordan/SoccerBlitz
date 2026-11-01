@@ -11,6 +11,8 @@ const Art = (() => {
     hex: 'M50 3 L91 26 V74 L50 97 L9 74 V26 Z',
     diamond: 'M50 2 L97 50 L50 98 L3 50 Z',
     pennant: 'M10 6 H90 V66 L50 96 L10 66 Z',
+    royal: 'M50 2 L60 10 L72 3 L76 15 L90 13 V50 C90 74 72 90 50 98 C28 90 10 74 10 50 V13 L24 15 L28 3 L40 10 Z',
+    octagon: 'M31 4 H69 L96 31 V69 L69 96 H31 L4 69 V31 Z',
     badge: 'M50 3 L62 12 L78 9 L83 24 L96 33 L90 49 L96 65 L83 74 L78 90 L62 87 L50 97 L38 87 L22 90 L17 74 L4 65 L10 49 L4 33 L17 24 L22 9 L38 12 Z',
   };
   const shapeEl = (key, attrs) => (key === 'circle' ? `<circle cx="50" cy="50" r="46" ${attrs}/>` : `<path d="${SHAPES[key] || SHAPES.shield}" ${attrs}/>`);
@@ -36,6 +38,10 @@ const Art = (() => {
     sun: (c, k) => `<circle cx="50" cy="50" r="20" fill="${c}" stroke="${k}" stroke-width="4"/>${Array.from({ length: 12 }, (_, i) => { const a = (i * Math.PI) / 6; return `<path d="M${50 + Math.cos(a) * 27} ${50 + Math.sin(a) * 27} L${50 + Math.cos(a) * 42} ${50 + Math.sin(a) * 42}" stroke="${c}" stroke-width="6" stroke-linecap="round"/>`; }).join('')}`,
     key: (c, k) => `<circle cx="34" cy="34" r="20" fill="none" stroke="${k}" stroke-width="14"/><circle cx="34" cy="34" r="20" fill="none" stroke="${c}" stroke-width="7"/><path d="M48 48 L86 86 M70 70 L80 60 M78 78 L88 68" stroke="${k}" stroke-width="13" stroke-linecap="round"/><path d="M48 48 L86 86 M70 70 L80 60 M78 78 L88 68" stroke="${c}" stroke-width="6" stroke-linecap="round"/>`,
     stag: (c, k) => `<path d="M40 40 L30 12 M30 24 L18 18 M34 30 L22 32 M60 40 L70 12 M70 24 L82 18 M66 30 L78 32" stroke="${c}" stroke-width="6" stroke-linecap="round"/><path d="M36 40 H64 L62 64 L50 86 L38 64 Z" fill="${c}" stroke="${k}" stroke-width="4" stroke-linejoin="round"/><circle cx="44" cy="54" r="3" fill="${k}"/><circle cx="56" cy="54" r="3" fill="${k}"/>`,
+    trophy: (c, k) => `<path d="M30 12 H70 V30 C70 46 62 56 50 58 C38 56 30 46 30 30 Z" fill="${c}" stroke="${k}" stroke-width="4" stroke-linejoin="round"/><path d="M30 18 H16 C16 34 24 40 32 40 M70 18 H84 C84 34 76 40 68 40" fill="none" stroke="${k}" stroke-width="5" stroke-linecap="round"/><path d="M44 58 H56 V72 H44 Z M30 74 H70 V88 H30 Z" fill="${c}" stroke="${k}" stroke-width="4" stroke-linejoin="round"/>`,
+    castle: (c, k) => `<path d="M10 90 V40 H8 V24 H18 V32 H26 V24 H36 V40 H40 V30 H44 V18 H56 V30 H60 V40 H64 V24 H74 V32 H82 V24 H92 V40 H90 V90 Z" fill="${c}" stroke="${k}" stroke-width="4" stroke-linejoin="round"/><path d="M40 90 V66 Q50 54 60 66 V90" fill="${k}"/><rect x="21" y="50" width="8" height="12" rx="4" fill="${k}"/><rect x="71" y="50" width="8" height="12" rx="4" fill="${k}"/>`,
+    rocket: (c, k) => `<path d="M50 6 C66 18 72 40 68 66 H32 C28 40 34 18 50 6 Z" fill="${c}" stroke="${k}" stroke-width="4" stroke-linejoin="round"/><circle cx="50" cy="36" r="8" fill="${k}"/><path d="M32 52 L18 72 L32 70 Z M68 52 L82 72 L68 70 Z" fill="${c}" stroke="${k}" stroke-width="4" stroke-linejoin="round"/><path d="M40 70 L44 92 L50 80 L56 92 L60 70 Z" fill="${k}"/>`,
+    laurel: (c, k) => `<g fill="${c}" stroke="${k}" stroke-width="3">${[0, 1, 2, 3, 4].map(i => { const a = 2.6 - i * 0.42; const x = 50 + Math.cos(a) * 34, y = 52 + Math.sin(a) * 34; const x2 = 50 - Math.cos(a) * 34; return `<ellipse cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="9" ry="5" transform="rotate(${(a * 57.3 + 90).toFixed(0)} ${x.toFixed(1)} ${y.toFixed(1)})"/><ellipse cx="${x2.toFixed(1)}" cy="${y.toFixed(1)}" rx="9" ry="5" transform="rotate(${(-a * 57.3 - 90).toFixed(0)} ${x2.toFixed(1)} ${y.toFixed(1)})"/>`; }).join('')}</g><polygon points="${star(50, 46, 16, 7)}" fill="${c}" stroke="${k}" stroke-width="3"/>`,
     cross: (c, k) => `<path d="M38 8 H62 V38 H92 V62 H62 V92 H38 V62 H8 V38 H38 Z" fill="${c}" stroke="${k}" stroke-width="4" stroke-linejoin="round"/>`,
   };
 
@@ -54,7 +60,7 @@ const Art = (() => {
 ${starRow}${shapeEl(shape, `fill="${s}"`)}
 <g transform="translate(50 50) scale(.86) translate(-50 -50)">${shapeEl(shape, `fill="${p}"`)}${band}</g>
 <g transform="translate(50 50) scale(.48) translate(-50 -50)">${(ICONS[c.icon] || ICONS.ball)(s, dark)}</g>
-${shapeEl(shape, `fill="url(#${id}g)"`)}
+${shapeEl(shape, `fill="url(#${id}g)"`)}${c.trim === 'gold' ? shapeEl(shape, 'fill="none" stroke="#fbbf24" stroke-width="5"') : ''}
 </svg>`;
   }
 
@@ -69,6 +75,10 @@ ${shapeEl(shape, `fill="url(#${id}g)"`)}
       case 'pin': return [16, 24, 32, 40, 48].map(x => `<rect x="${x}" y="0" width="1.6" height="64" fill="${c2}" opacity=".8"/>`).join('');
       case 'chevron': return `<path d="M8 22 L32 40 L56 22 L56 30 L32 48 L8 30 Z" fill="${c2}"/>`;
       case 'band': return `<rect x="0" y="26" width="64" height="9" fill="${c2}"/>`;
+      case 'quarters': return `<rect x="32" y="0" width="32" height="30" fill="${c2}"/><rect x="0" y="30" width="32" height="34" fill="${c2}"/>`;
+      case 'fade': return [0, 1, 2, 3, 4, 5].map(i => `<rect x="0" y="${22 + i * 7}" width="64" height="7" fill="${c2}" opacity="${((i + 1) / 6).toFixed(2)}"/>`).join('');
+      case 'goldpin': return [14, 22, 30, 38, 46].map(x => `<rect x="${x}" y="0" width="1.8" height="64" fill="#fbbf24"/>`).join('') + '<rect x="0" y="56" width="64" height="3" fill="#fbbf24"/>';
+      case 'starband': return `<rect x="0" y="24" width="64" height="12" fill="${c2}"/>` + [22, 32, 42].map(x => `<polygon points="${star(x, 30, 4, 1.7)}" fill="#fbbf24"/>`).join('');
       default: return '';
     }
   }

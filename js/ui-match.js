@@ -6,6 +6,7 @@
   const P = id => G.players[id];
   const T = id => G.teams[id];
   const SPEEDS = [1, 2, 4, 8];
+  const hlDock = () => `<div class="dock"><button data-a="livePause" id="btn-pause">${I.pause}<span>Pause</span></button><button data-a="liveCam">${I.cam}<span>Camera</span></button><button data-a="hlDone">${I.skip}<span>Done</span></button></div>`;
 
   // ── pre-match ──
   A.prematch = () => {
@@ -23,7 +24,7 @@
     const edge = (ss.att + ss.mid + ss.def) - (so.att + so.mid + so.def);
     UI.sheet(`<div class="kicker center">${esc(UI.compName(f))}</div>
       <div class="vs"><div class="side">${UI.crest(T(f.h), 62)}<b>${esc(T(f.h).name)}</b></div><div class="mid">VS<small>${L.dateStr()}</small></div><div class="side">${UI.crest(T(f.a), 62)}<b>${esc(T(f.a).name)}</b></div></div>
-      <div class="card tight"><div class="flex between">${UI.wxChip(f.wx)}<span class="tiny muted">${f.neutral ? 'Neutral venue' : esc(T(f.h).stadium.name)}</span></div><div class="tiny mt4">${esc(w.tip)}</div></div>
+      <div class="card tight"><div class="flex between">${UI.wxChip(f.wx)}<span class="tiny muted">${f.neutral ? 'Neutral venue' : `${esc(T(f.h).stadium.name)} · pitch ${Xtra.pitchLabel(Xtra.pitch(T(f.h))).toLowerCase()} (${Math.round(Xtra.pitch(T(f.h)))}%)`}</span></div><div class="tiny mt4">${esc(w.tip)}</div></div>
       <div class="card tight"><div class="kicker mb8">Scouting report: ${esc(opp.name)}</div>${c ? `<div class="small">${ci.icon} <b>${esc(c.fn)} ${esc(c.ln)}</b> — ${esc(ci.name)}. Expect a <b>${opp.tac.oop}</b> with ${opp.tac.rOOP.slice(1).map(r => TAC.ROLES[r]).filter(r => r && (r.attack.du > 0.15 || Math.abs(r.attack.dv) > 0.15 || r.attack.du < -0.08)).map(r => r.name).slice(0, 3).join(', ') || 'conventional roles'}.</div>` : ''}<div class="flex mt8" style="gap:6px">${UI.form(opp.form)}<span class="tiny muted">${f.comp === 'L' ? `${U.ord(L.position(opp.id))} in the table` : ''}</span></div>
         <div class="mt8">${keys.map(p => `<div class="flex small" style="padding:3px 0">${UI.posB(p.pos)}<span class="grow">${esc(p.fn[0])}. ${esc(p.ln)}</span>${UI.ovrB(p)}</div>`).join('')}</div></div>
       <div class="card tight"><div class="flex between"><span class="kicker">Your side · ${u.tac.oop}</span><span class="tag ${edge > 6 ? 't-good' : edge < -6 ? 't-bad' : ''}">${edge > 6 ? 'Favourites' : edge < -6 ? 'Underdogs' : 'Even contest'}</span></div>
@@ -67,18 +68,26 @@
   function startLive(f, m, opts) {
     const side = f.h === G.userTeamId ? 0 : 1;
     const [hk, ak] = Art.kitsFor(T(f.h), T(f.a));
-    S.live = { f, m, side, opts, speed: G.settings.speed || 2, paused: false, acc: 0, last: 0, shown: 0, ticks: [], hudAt: 0, ended: false, ht: false, rec: [], recN: 0, fxRec: m.fxTotal, goals: m.score[0] + m.score[1], pendingReplay: null, replay: null };
+    S.live = { f, m, side, opts, speed: G.settings.speed || 2, paused: false, acc: 0, last: 0, shown: 0, ticks: [], hudAt: 0, ended: false, ht: false, rec: [], recN: 0, fxRec: m.fxTotal, goals: m.score[0] + m.score[1], pendingReplay: null, replay: null, hlq: [], clips: [], cue: {} };
     S.liveSide = side;
     UI.go('match');
-    const cv = document.getElementById('pitch');
-    const r = new Render.Pitch(cv, m, { home: T(f.h), away: T(f.a), kits: [hk, ak], ko: f.wx ? f.wx.ko : 'day', camera: G.settings.cam || 'follow', onSound: n => Sfx.play(n === 'bighit' ? 'bighit' : n) });
-    S.live.r = r;
+    S.live.r = makeRenderer(f, m, hk, ak);
     fitInsets();
     Sfx.crowdStart();
     Sfx.play('whistle');
     S.live.last = performance.now();
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(loop);
+  }
+  // how full the ground looks: the real crowd for a finished game, the expected one before kick-off
+  function crowdFill(f) {
+    if (f.neutral) return 0.85;
+    const h = T(f.h), cap = h.stadium.cap || 1;
+    return U.clamp((f.att || L.attendance(h, T(f.a), f)) / cap, 0.15, 1);
+  }
+  function makeRenderer(f, m, hk, ak) {
+    const cv = document.getElementById('pitch');
+    return new Render.Pitch(cv, m, { home: T(f.h), away: T(f.a), kits: [hk, ak], ko: f.wx ? f.wx.ko : 'day', camera: G.settings.cam || 'follow', fill: f.comp === 'A' ? 0.5 : crowdFill(f), onSound: n => Sfx.play(n === 'bighit' ? 'bighit' : n) });
   }
   function loop(now) {
     const L0 = S.live;
@@ -89,6 +98,7 @@
     // a goal: let the celebration play, then roll the replay (the match waits while it runs)
     const pr = L0.pendingReplay;
     if (pr && !L0.replay && !L0.paused && now >= pr.at) { L0.pendingReplay = null; if (!L0.ht && !L0.ended && G.settings.replays !== false) startReplay(pr); }
+    if (L0.hl && !L0.replay && !L0.paused) nextClip();
     if (L0.replay) {
       if (!L0.paused) stepReplay(dt);
       if (L0.replay) { L0.r.render(Math.min(1, L0.replay.acc / Engine.TICK)); raf = requestAnimationFrame(loop); return; }
@@ -121,10 +131,11 @@
       time: m.time,
       fx: n > 0 ? m.fx.slice(-Math.min(n, m.fx.length)) : null,
       b: { x: b.pos.x, y: b.pos.y, z: b.z, vx: b.vel.x, vy: b.vel.y, owner: b.owner, curl: b.curl, power: b.power, flair: !!b.flair },
-      ps: m.onPitch.map(p => [p.id, p.pos.x, p.pos.y, p.ang, p.vel.x, p.vel.y, p.down, p.dive, p.diveDir, p.slide, p.spin, p.spinAng, p.stride, p.z, p.stun, p.twirl, p.skill ? p.skill.kind : null, p.celebrate, p.fire]),
+      ps: m.onPitch.map(p => [p.id, p.pos.x, p.pos.y, p.ang, p.vel.x, p.vel.y, p.down, p.dive, p.diveDir, p.slide, p.spin, p.spinAng, p.stride, p.z, p.stun, p.twirl, p.skill ? p.skill.kind : null, p.celebrate, p.fire, p.air || null]),
     });
     L0.recN++;
     if (L0.rec.length > TAPE) L0.rec.shift();
+    if (L0.hlq) captureClips(L0, n > 0 ? m.fx.slice(-Math.min(n, m.fx.length)) : []);
     const goals = m.score[0] + m.score[1];
     if (goals !== L0.goals) {
       L0.goals = goals;
@@ -133,20 +144,104 @@
       L0.pendingReplay = { idx: L0.recN - 1, team: e ? e.team : b.lastTeam, at: now + 2300 };
     }
   }
+  // ── highlights: goals, big saves, the woodwork and skill moves that beat a man, cut from the tape as they happen ──
+  const CLIP = { goal: [4, AFTER], save: [2.6, 1], post: [2.6, 1], skill: [1.6, 1.4] };
+  function captureClips(L0, fx) {
+    const m = L0.m, cue = L0.cue, idx = L0.recN - 1;
+    const byData = id => { const p = m.players.find(q => q.data.id === id); return p || null; };
+    for (const e of fx) {
+      if (e.type === 'shot' || e.type === 'header') { cue.shooter = e.pid; cue.shotAt = m.time; }
+      else if (e.type === 'skill' && e.kind !== 'dash' && e.kind !== 'evade') cue.skill = { pid: e.pid, label: e.label, at: m.time };
+      else if (e.type === 'goal') {
+        const g = m.goalLog[m.goalLog.length - 1], sc = g && g.pid ? byData(g.pid) : null;
+        L0.hlq.push({ kind: 'goal', idx, team: e.team, min: m.minute, text: Xtra.comm.goal(g, sc && sc.data), pri: 10 });
+      } else if (e.type === 'save' && cue.shotAt != null && m.time - cue.shotAt < 2) {
+        cue.shotAt = null;
+        const k = byData(e.pid), s = byData(cue.shooter);
+        if (k) L0.hlq.push({ kind: 'save', idx, team: 1 - k.team, min: m.minute, text: Xtra.comm.save(k.data, s && s.data), pri: 6 });
+      } else if (e.type === 'post') {
+        const s = byData(cue.shooter);
+        L0.hlq.push({ kind: 'post', idx, team: e.team, min: m.minute, text: Xtra.comm.post(s && s.data), pri: 5 });
+      } else if (e.type === 'stun' && cue.skill && m.time - cue.skill.at < 1.5) {
+        const a = byData(cue.skill.pid), v = byData(e.pid);
+        if (a && v && a.team !== v.team) L0.hlq.push({ kind: 'skill', idx, team: a.team, track: a.id, min: m.minute, text: Xtra.comm.skill(a.data, cue.skill.label, v.data), pri: 3 });
+        cue.skill = null;
+      }
+    }
+    // cut a clip once the tape has enough after the moment
+    const first = L0.recN - L0.rec.length;
+    L0.hlq = L0.hlq.filter(c => {
+      const [b4, af] = CLIP[c.kind], need = c.idx + Math.round(af / Engine.TICK);
+      if (idx < need) return true;
+      const from = Math.max(0, c.idx - Math.round(b4 / Engine.TICK) - first), to = need - first;
+      if (to - from > 10) L0.clips.push({ ...c, frames: L0.rec.slice(from, to + 1), at: c.idx - first - from });
+      return false;
+    });
+    // keep every goal, and the best of the rest
+    if (L0.clips.length > 14) { const drop = L0.clips.filter(c => c.kind !== 'goal').sort((a, b) => a.pri - b.pri)[0]; if (drop) L0.clips.splice(L0.clips.indexOf(drop), 1); }
+  }
+  function reel(L0) {
+    const goals = L0.clips.filter(c => c.kind === 'goal'), rest = L0.clips.filter(c => c.kind !== 'goal').sort((a, b) => b.pri - a.pri).slice(0, Math.max(3, 9 - goals.length));
+    return goals.concat(rest).sort((a, b) => a.idx - b.idx);
+  }
+  A.highlights = () => {
+    const R = S.report;
+    if (!R || !R.clips || !R.clips.length) return;
+    const { f, m } = R, side = f.h === G.userTeamId ? 0 : 1;
+    const [hk, ak] = Art.kitsFor(T(f.h), T(f.a));
+    S.live = { f, m, side, opts: { kind: 'senior', hl: true }, speed: 1, paused: false, acc: 0, last: performance.now(), shown: m.events.length, ticks: [], hudAt: 0, ended: true, ht: false, rec: [], recN: 0, fxRec: m.fxTotal, goals: 0, pendingReplay: null, replay: null, hl: { clips: R.clips, k: -1 } };
+    UI.go('match');
+    S.live.r = makeRenderer(f, m, hk, ak);
+    fitInsets();
+    Sfx.crowdStart();
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(loop);
+  };
+  function nextClip() {
+    const L0 = S.live, hl = L0.hl;
+    hl.k++;
+    const cap = document.getElementById('hl-cap');
+    if (hl.k >= hl.clips.length) {
+      L0.paused = true;
+      if (cap) cap.remove();
+      const ov = document.getElementById('overlay');
+      if (ov && !document.getElementById('hl-end')) ov.insertAdjacentHTML('beforeend', `<div class="ht" id="hl-end"><div class="box center"><div class="kicker">That's the highlights</div><div class="big mt8">${L0.m.score[0]} - ${L0.m.score[1]}</div><button class="btn block mt12" data-a="hlAgain">↺ Watch again</button><button class="btn primary block mt8" data-a="hlDone">Back to the report</button></div></div>`);
+      return;
+    }
+    const c = hl.clips[hl.k], m = L0.m;
+    const focus = { label: `HIGHLIGHTS · ${hl.k + 1}/${hl.clips.length}`, goal: [], keeper: null };
+    if (c.kind === 'skill') focus.track = c.track;
+    else { const gx = c.team === 0 ? m.cfg.L : 0, back = c.team === 0 ? 1.5 : -1.5, kp = m.keeper(1 - c.team); focus.goal = [{ x: gx, y: m.cfg.GY0 }, { x: gx, y: m.cfg.GY1 }, { x: gx + back, y: m.cfg.W / 2 }]; focus.keeper = kp ? kp.id : null; }
+    runReplay(c.frames, c.at, focus, c.kind === 'goal' || c.kind === 'save');
+    const ov = document.getElementById('overlay');
+    if (ov) {
+      if (cap) cap.remove();
+      ov.insertAdjacentHTML('beforeend', `<div class="hl-cap" id="hl-cap"><b>${c.min}'</b> ${esc(c.text)}</div>`);
+      const b = document.getElementById('replay-skip');
+      if (b) b.textContent = hl.k + 1 < hl.clips.length ? 'Next clip ⏭' : 'Finish ⏭';
+    }
+  }
+  A.hlAgain = () => { const L0 = S.live; if (!L0 || !L0.hl) return; L0.hl.k = -1; L0.paused = false; const e = document.getElementById('hl-end'); if (e) e.remove(); };
+  A.hlDone = () => { endReplay(); S.live = null; UI.go('report'); };
   function startReplay(pr) {
     const L0 = S.live, m = L0.m, first = L0.recN - L0.rec.length;
     const g0 = pr.idx - first;
     const from = Math.max(0, g0 - Math.round(BEFORE / Engine.TICK)), to = Math.min(L0.rec.length - 1, g0 + Math.round(AFTER / Engine.TICK));
     if (g0 < 0 || to - from < 10) return;
     const frames = L0.rec.slice(from, to + 1);
+    const team = pr.team, gx = team === 0 ? m.cfg.L : 0, back = team === 0 ? 1.5 : -1.5;
+    const kp = m.keeper(1 - team);
+    const focus = { goal: [{ x: gx, y: m.cfg.GY0 }, { x: gx, y: m.cfg.GY1 }, { x: gx + back, y: m.cfg.W / 2 }], keeper: kp ? kp.id : null };
+    runReplay(frames, g0 - from, focus, true);
+  }
+  // play recorded frames back through the renderer; slowGoal: the last second before the moment goes to slow motion
+  function runReplay(frames, at, focus, slowGoal) {
+    const L0 = S.live, m = L0.m;
     // ghosts: the shape the renderer expects of the match and its players
     const ghosts = m.players.map(p => ({ id: p.id, team: p.team, isGK: p.isGK, data: p.data, pos: { ...p.pos }, prevPos: { ...p.pos }, vel: { x: 0, y: 0 }, ang: p.ang, prevAng: p.ang, z: 0, down: 0, dive: 0, slide: 0, spin: 0, spinAng: 0, stride: 0, stun: 0, twirl: 0, skill: null, celebrate: 0, fire: -99 }));
     const ball = { pos: { x: 0, y: 0 }, prevPos: { x: 0, y: 0 }, z: 0, prevZ: 0, vel: { x: 0, y: 0 }, owner: null, curl: 0, power: 0, flair: false };
     const R = { cfg: m.cfg, five: m.five, weather: m.weather, wind: m.wind, wall: null, restart: null, time: 0, fx: [], fxTotal: 0, ball, players: ghosts, onPitch: [] };
-    const team = pr.team, gx = team === 0 ? m.cfg.L : 0, back = team === 0 ? 1.5 : -1.5;
-    const kp = m.keeper(1 - team);
-    const focus = { goal: [{ x: gx, y: m.cfg.GY0 }, { x: gx, y: m.cfg.GY1 }, { x: gx + back, y: m.cfg.W / 2 }], keeper: kp ? kp.id : null };
-    L0.replay = { R, frames, i: -1, acc: 0, goalAt: g0 - from };
+    L0.replay = { R, frames, i: -1, acc: 0, goalAt: slowGoal ? at : Infinity };
     applyFrame(L0.replay, 0); applyFrame(L0.replay, 0);
     L0.r.startReplay(R, focus);
     const ov = document.getElementById('overlay');
@@ -164,7 +259,7 @@
       g.prevPos = { ...g.pos }; g.prevAng = g.ang;
       [, g.pos.x, g.pos.y, g.ang, g.vel.x, g.vel.y, g.down, g.dive, g.diveDir, g.slide, g.spin, g.spinAng, g.stride, g.z, g.stun, g.twirl] = a;
       g.pos = { x: a[1], y: a[2] }; g.vel = { x: a[4], y: a[5] };
-      g.skill = a[16] ? { kind: a[16] } : null; g.celebrate = a[17]; g.fire = a[18];
+      g.skill = a[16] ? { kind: a[16] } : null; g.celebrate = a[17]; g.fire = a[18]; g.air = a[19];
       return g;
     });
     // the first frame of the tape has no "before": don't let anyone slide in from where they stood after the goal
@@ -250,14 +345,14 @@
       <div class="mom"><i id="mom"></i></div>
       ${L0.opts.replay ? '<div class="center tiny" style="position:relative;z-index:3;margin-top:6px;color:#fde047">▶ REPLAY</div>' : ''}
       <div class="ticker" id="ticker"></div>
-      <div class="dock">
+      ${L0.hl ? hlDock() + '<div id="overlay"></div></div>' : `<div class="dock">
         <button data-a="livePause" id="btn-pause">${L0.paused ? I.play : I.pause}<span>${L0.paused ? 'Play' : 'Pause'}</span></button>
         <button class="speed" data-a="liveSpeed"><b id="spd">${L0.speed}×</b><span>Speed</span></button>
         ${acad ? '' : `<button data-a="liveTactics">${I.tactics}<span>Tactics</span></button>`}
         <button data-a="liveStats">${I.stats}<span>Stats</span></button>
         <button data-a="liveCam">${I.cam}<span>Camera</span></button>
         <button data-a="liveSkip">${I.skip}<span>Sim</span></button>
-      </div><div id="overlay"></div></div>`;
+      </div><div id="overlay"></div></div>`}`;
   };
   SCREENS.match.resize = () => { if (S.live && S.live.r) { S.live.r.resize(); fitInsets(); } };
   SCREENS.match.unmount = () => { cancelAnimationFrame(raf); Sfx.crowdStop(); };
@@ -372,7 +467,7 @@
       return;
     }
     L.simRest();
-    S.report = { f, res, m };
+    S.report = { f, res, m, clips: reel(L0) };
     // a tie decided on penalties: play the shoot-out out on screen before the report
     if (res.pens && m.kicks) return shootout(f, m, res);
     resultSound(f, res);
@@ -437,6 +532,7 @@
       <div class="card">${statBars(res, h, a)}</div>
       ${m ? `<div class="card"><h3>Player ratings</h3>${ratingsList(m, side)}</div>` : ''}
       ${others.length ? `<div class="card"><h3>Around the ${f.comp === 'L' ? esc(L.league(f.lg).name) : 'competition'}</h3>${others.map(x => `<div class="flex small" style="padding:5px 0"><span class="grow flex" style="justify-content:flex-end;gap:6px">${esc(T(x.h).abbr)}${UI.crest(T(x.h), 18)}</span><b style="min-width:44px;text-align:center;font-family:var(--f-display)">${x.hs}-${x.as}</b><span class="grow flex" style="gap:6px">${UI.crest(T(x.a), 18)}${esc(T(x.a).abbr)}</span></div>`).join('')}</div>` : ''}
+      ${R.clips && R.clips.length ? `<button class="btn big block mb8" data-a="highlights">🎬 Watch the highlights · ${R.clips.length} clip${R.clips.length > 1 ? 's' : ''}</button>` : ''}
       <button class="btn primary big block" data-a="reportDone">Continue</button></div></div>`;
   };
   A.reportDone = () => { S.report = null; S.live = null; News.roundUp(G.day); L.save(); UI.go('hub', { tab: 'home' }); };

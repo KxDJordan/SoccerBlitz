@@ -194,7 +194,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
 .msg { border-radius: 16px; padding: 12px; margin-bottom: 8px; background: var(--surface-2); border: 1px solid var(--line); }
 .msg.unread { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
 .msg .mt { font-weight: 700; font-size: 14px; display: flex; gap: 8px; align-items: flex-start; }
-.msg .mb { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.msg .mb { font-size: 13px; color: var(--muted); margin-top: 4px; white-space: pre-line; }
 .msg .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .msg .res { font-size: 12.5px; color: var(--accent-2); margin-top: 6px; font-weight: 600; }
 
@@ -407,4 +407,28 @@ textarea.txt { width: 100%; min-height: 90px; border-radius: 14px; border: 1px s
 .hmi i.e { box-shadow: 0 0 0 1.5px #f5c542; background: color-mix(in srgb, #f5c542 22%, var(--surface-3)); }
 
 /* instant replay: skip button sits just above the match controls */
+.hl-cap { position: absolute; z-index: 6; left: 12px; right: 12px; bottom: calc(140px + var(--safe-b)); padding: 9px 12px; border-radius: 12px; background: rgba(6, 10, 18, .82); border: 1px solid rgba(255, 255, 255, .16); color: #fff; font-size: 14px; font-weight: 600; pointer-events: none; animation: capIn .35s var(--ease); }
+.hl-cap b { color: #fde047; margin-right: 6px; font-family: var(--f-display); }
+@keyframes capIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 .replay-skip { position: absolute; z-index: 6; right: 14px; bottom: calc(84px + var(--safe-b)); background: rgba(6, 10, 18, .85); color: #fff; border: 1px solid rgba(255, 255, 255, .25); pointer-events: auto; }
+
+/* museum */
+.cabinet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px 8px 6px; border-radius: 14px; background: linear-gradient(180deg, rgba(120, 80, 40, .18), rgba(60, 40, 20, .3)); box-shadow: inset 0 -6px 0 rgba(90, 60, 30, .5); }
+.cabinet .tro { position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px; }
+.cabinet .tro b { font-size: 11px; line-height: 1.15; }
+.cabinet .tro span { font-size: 10px; color: var(--muted); }
+.cabinet .tro .cnt { position: absolute; top: 0; right: 6px; font-family: var(--f-display); font-size: 15px; color: #fde047; }
+/* finance */
+.fchart { width: 100%; height: auto; display: block; }
+.fchart text { font-size: 10px; fill: var(--dim); font-family: var(--f-body); }
+.fchart .grid { stroke: var(--line); stroke-width: 1; }
+.fchart .hit { fill: transparent; cursor: pointer; }
+.fchart .selbg { fill: var(--surface-3); opacity: .7; }
+.fleg { display: flex; gap: 12px; font-size: 12px; color: var(--muted); align-items: center; }
+.fleg i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.frow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.frow:last-child { border-bottom: 0; }
+.frow.tot { font-weight: 800; border-top: 1px solid var(--line-strong); border-bottom: 0; margin-top: 2px; }
+.deal { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.deal:last-child { border-bottom: 0; }
+.deal .ic { font-size: 20px; width: 34px; height: 34px; display: grid; place-items: center; background: var(--surface-3); border-radius: 10px; flex: none; }

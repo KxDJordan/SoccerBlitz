@@ -92,7 +92,7 @@
     return `<div class="card"><h3>${I.inbox.replace('<svg', '<svg style="width:16px;height:16px"')} Inbox<span class="grow"></span><button class="btn xs" data-a="inbox">All</button></h3>${list.map(msgHTML).join('')}</div>`;
   }
   function msgHTML(m) {
-    const icon = { trade: '🔄', bid: '💰', event: '⚡', acad: '🎓', scout: '🔭', injury: '🩹', contract: '📝', job: '💼', board: '🏛️', showcase: '🌟', unrest: '😤' }[m.type] || '✉️';
+    const icon = { trade: '🔄', bid: '💰', event: '⚡', acad: '🎓', scout: '🔭', injury: '🩹', contract: '📝', job: '💼', board: '🏛️', showcase: '🌟', unrest: '😤', sponsor: '🤝', unlock: '🎨', vote: '🗳️' }[m.type] || '✉️';
     return `<div class="msg${m.read ? '' : ' unread'}"><div class="mt"><span>${icon}</span><span class="grow">${esc(m.title)}</span><span class="tiny dim">${L.dateStr(m.day, true)}</span></div>${m.body ? `<div class="mb">${esc(m.body)}</div>` : ''}${!m.done && m.actions ? `<div class="acts">${m.actions.map((a, i) => `<button class="btn xs ${i === 0 ? 'primary' : a.danger ? 'danger' : ''}" data-a="msgAct" data-v="${m.id}:${i}">${esc(a.label)}</button>`).join('')}</div>` : ''}${m.result ? `<div class="res">${esc(m.result)}</div>` : ''}</div>`;
   }
   function boardCard() {
@@ -169,6 +169,7 @@
     L.save();
     if (out && out.nav === 'player') { A.player(out.v); return; }
     if (out && out.nav === 'tab') { A.tab(out.v); return; }
+    if (out && out.nav === 'club') { UI.closeSheet(); A.clubTab(out.v); return; }
     if (out && out.text) UI.toast(esc(out.text));
     if (out && out.nav === 'home') { UI.closeSheet(); UI.go('hub', { tab: 'home' }); return; }
     // the screen behind the sheet (home inbox card, badges) has to catch up too

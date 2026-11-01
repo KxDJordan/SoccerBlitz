@@ -21,8 +21,10 @@ const Render = (() => {
   };
   const pitchStyle = () => { try { return PITCH_STYLES[localStorage.getItem('soccerblitz.pitch')] ? localStorage.getItem('soccerblitz.pitch') : 'stripes'; } catch (e) { return 'stripes'; } };
 
-  function buildLayer(cfg, home, away, five, night) {
-    const SUR = five ? 7 : 14;
+  function buildLayer(cfg, home, away, five, night, fill = 0.9) {
+    const cap = (home.stadium && home.stadium.cap) || 30000, biz = home.biz || {};
+    const third = !five && cap >= 55000;
+    const SUR = five ? 7 : third ? 18 : 14;
     const Wm = cfg.L + SUR * 2, Hm = cfg.W + SUR * 2;
     const cv = document.createElement('canvas');
     cv.width = Math.round(Wm * LAYER_PX); cv.height = Math.round(Hm * LAYER_PX);
@@ -36,16 +38,26 @@ const Render = (() => {
     c.fillRect(-SUR, -SUR, Wm, Hm);
     if (!five) {
       // concrete tiers with seat rows, then the crowd on top
-      const tiers = [[5.2, 9.2], [9.8, 13.6]];
+      // a small ground has one tier; bigger ones a second (round the sides only below 35,000), the giants a third
+      const tiers = [[5.2, 9.2]];
+      if (cap >= 22000) tiers.push([9.8, 13.6]);
+      if (third) tiers.push([14.2, 17.4]);
+      const sidesOnly = cap < 35000;
+      // open terraces where there's no stand: grass banks and a fence
+      c.fillStyle = night ? '#0a1410' : '#16261c';
+      if (cap < 22000) { c.fillRect(-13.6, -13.6, cfg.L + 27.2, 4.4); c.fillRect(-13.6, cfg.W + 9.2, cfg.L + 27.2, 4.4); c.fillRect(-13.6, -9.2, 4.4, cfg.W + 18.4); c.fillRect(cfg.L + 9.2, -9.2, 4.4, cfg.W + 18.4); }
+      else if (sidesOnly) { c.fillRect(-13.6, -9.2, 4.4, cfg.W + 18.4); c.fillRect(cfg.L + 9.2, -9.2, 4.4, cfg.W + 18.4); }
       for (const [r0, r1] of tiers) {
+        const ends = !(sidesOnly && r0 > 9);
         c.fillStyle = night ? '#121826' : '#1b2232';
         c.fillRect(-r1, -r1, cfg.L + 2 * r1, r1 - r0); c.fillRect(-r1, cfg.W + r0, cfg.L + 2 * r1, r1 - r0);
-        c.fillRect(-r1, -r0, r1 - r0, cfg.W + 2 * r0); c.fillRect(cfg.L + r0, -r0, r1 - r0, cfg.W + 2 * r0);
+        if (ends) { c.fillRect(-r1, -r0, r1 - r0, cfg.W + 2 * r0); c.fillRect(cfg.L + r0, -r0, r1 - r0, cfg.W + 2 * r0); }
       }
       const homeCols = [home.kit.c1, home.kit.c1, home.kit.c2, home.kit.c1, '#e2e8f0', '#94a3b8', '#475569'];
       const awayCols = [away.kit.c1, away.kit.c2, away.kit.c1];
+      // empty seats when the gate is down (the away end fills regardless)
       const seat = (x, y, ring) => {
-        if (rnd.chance(0.1)) return;
+        if (rnd.chance(0.1 + Math.max(0, 0.95 - fill) * 0.95) && !(x > cfg.L * 0.72 && y > cfg.W + 4)) return;
         // behind each goal a tifo block in club colours; one corner for the travelling fans
         const behindGoal = (x < -4 || x > cfg.L + 4) && Math.abs(y - cfg.W / 2) < cfg.W * 0.32;
         const awayEnd = x > cfg.L * 0.72 && y > cfg.W + 4;
@@ -58,18 +70,45 @@ const Render = (() => {
         c.beginPath(); c.arc(x, y, 0.21, 0, 7); c.fill();
       };
       for (const [r0, r1] of tiers) for (let ring = r0 + 0.35; ring < r1; ring += 0.55) {
+        const ends = !(sidesOnly && r0 > 9);
         for (let x = -ring; x <= cfg.L + ring; x += 0.55) { seat(x, -ring, ring); seat(x, cfg.W + ring, ring); }
-        for (let y = -ring + 0.55; y < cfg.W + ring; y += 0.55) { seat(-ring, y, ring); seat(cfg.L + ring, y, ring); }
+        if (ends) for (let y = -ring + 0.55; y < cfg.W + ring; y += 0.55) { seat(-ring, y, ring); seat(cfg.L + ring, y, ring); }
       }
       c.globalAlpha = 1;
       // aisles and the roof's shadow on the upper tier
       c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 0.25;
       for (let x = 8; x < cfg.L; x += 12) { c.beginPath(); c.moveTo(x, -5); c.lineTo(x, -13.6); c.moveTo(x, cfg.W + 5); c.lineTo(x, cfg.W + 13.6); c.stroke(); }
       const roof = (x, y, w, h, vert, dir) => { const g = vert ? c.createLinearGradient(x + (dir > 0 ? 0 : w), 0, x + (dir > 0 ? w : 0), 0) : c.createLinearGradient(0, y + (dir > 0 ? 0 : h), 0, y + (dir > 0 ? h : 0)); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.55)'); c.fillStyle = g; c.fillRect(x, y, w, h); };
-      roof(-14, -14, cfg.L + 28, 5, false, -1); roof(-14, cfg.W + 9, cfg.L + 28, 5, false, 1);
-      roof(-14, -9, 5, cfg.W + 18, true, -1); roof(cfg.L + 9, -9, 5, cfg.W + 18, true, 1);
+      // a roof over the stands once the ground is big enough (over the top tier on the giants)
+      if (cap >= 40000) {
+        const R = third ? 18 : 14, d = third ? 4 : 5;
+        roof(-R, -R, cfg.L + 2 * R, d, false, -1); roof(-R, cfg.W + R - d, cfg.L + 2 * R, d, false, 1);
+        roof(-R, -(R - d), d, cfg.W + 2 * (R - d), true, -1); roof(cfg.L + R - d, -(R - d), d, cfg.W + 2 * (R - d), true, 1);
+      }
+      // hospitality boxes: a glass strip along the main stand, more of it lit with each level
+      if (biz.boxes && cap >= 22000) {
+        const n = 6 + biz.boxes * 6, w = (cfg.L * 0.8) / n;
+        for (let i = 0; i < n; i++) {
+          const x = cfg.L * 0.1 + i * w;
+          c.fillStyle = '#0b1220'; c.fillRect(x, cfg.W + 9.22, w - 0.15, 0.56);
+          c.fillStyle = night ? 'rgba(254,240,138,.85)' : 'rgba(186,230,253,.65)'; c.fillRect(x + 0.1, cfg.W + 9.3, w - 0.35, 0.4);
+        }
+      }
+      // big screens in the corners of the stands behind the goals
+      if (biz.screen) {
+        const sc = [[-11.8, cfg.W / 2 - 13]];
+        if (biz.screen >= 2) sc.push([cfg.L + 7.2, cfg.W / 2 + 6]);
+        for (const [x, y] of sc) {
+          c.fillStyle = '#05070d'; c.fillRect(x, y, 4.6, 7);
+          const g = c.createLinearGradient(x, y, x + 4.6, y + 7); g.addColorStop(0, home.kit.c1); g.addColorStop(1, home.kit.c2);
+          c.fillStyle = g; c.globalAlpha = 0.85; c.fillRect(x + 0.35, y + 0.35, 3.9, 6.3); c.globalAlpha = 1;
+          // LED rows (no lettering: the layer is turned and flipped for portrait screens)
+          c.fillStyle = 'rgba(255,255,255,.55)'; for (let i = 0; i < 3; i++) c.fillRect(x + 1 + i * 1.1, y + 1, 0.35, 5);
+        }
+      }
       // floodlight pylons in the corners
-      for (const [x, y] of [[-12.5, -12.5], [cfg.L + 12.5, -12.5], [-12.5, cfg.W + 12.5], [cfg.L + 12.5, cfg.W + 12.5]]) {
+      const fl = third ? 16.5 : 12.5;
+      for (const [x, y] of [[-fl, -fl], [cfg.L + fl, -fl], [-fl, cfg.W + fl], [cfg.L + fl, cfg.W + fl]]) {
         c.fillStyle = '#2a3346'; c.fillRect(x - 1.6, y - 1.6, 3.2, 3.2);
         c.fillStyle = night ? '#fff7d6' : '#cbd5e1';
         for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) c.fillRect(x - 1.25 + i * 0.9, y - 1.25 + j * 0.9, 0.65, 0.65);
@@ -163,7 +202,7 @@ const Render = (() => {
       this.ko = opts.ko || 'day';
       this.night = this.ko === 'night';
       this.gloom = Math.min(0.5, (wxBase.gloom || 0) + (DATA.KICKOFF.find(k => k.id === this.ko) || { gloom: 0 }).gloom);
-      this.layer = buildLayer(this.cfg, h, a, this.five, this.night || this.ko === 'dusk');
+      this.layer = buildLayer(this.cfg, h, a, this.five, this.night || this.ko === 'dusk', opts.fill);
       this.camera = opts.camera || 'follow';
       this.cam = { x: this.cfg.L / 2, y: this.cfg.W / 2, zoom: 1 };
       this.particles = []; this.floaters = []; this.rings = []; this.trail = []; this.drops = []; this.clouds = [];
@@ -263,6 +302,8 @@ const Render = (() => {
       const c = this.cfg, f = this.replay.focus, kp = f.keeper != null ? this.m.players[f.keeper] : null;
       const pts = [ball, ...f.goal];
       if (kp && this.m.onPitch.includes(kp)) pts.push(kp.pos);
+      const tr = f.track != null ? this.m.players[f.track] : null;
+      if (tr && this.m.onPitch.includes(tr)) pts.push(tr.pos, { x: tr.pos.x + 4, y: tr.pos.y + 3 }, { x: tr.pos.x - 4, y: tr.pos.y - 3 });
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
       for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
       const mx = 5, my = 4; // breathing room round the edges
@@ -289,7 +330,7 @@ const Render = (() => {
       ctx.fillRect(0, this.h - i.bottom - bar, this.w, bar);
       const y = i.top - 10 + bar + 22;
       ctx.font = '900 15px Oswald, Impact, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
-      const label = 'INSTANT REPLAY', w = ctx.measureText(label).width + 34;
+      const label = this.replay.focus.label || 'INSTANT REPLAY', w = ctx.measureText(label).width + 34;
       ctx.fillStyle = 'rgba(8,12,22,.85)'; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(12, y - 13, w, 26, 6) : ctx.rect(12, y - 13, w, 26); ctx.fill();
       ctx.fillStyle = Math.floor(now / 500) % 2 ? '#ef4444' : '#7f1d1d'; ctx.beginPath(); ctx.arc(25, y, 5, 0, 7); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.fillText(label, 36, y + 1);
@@ -446,23 +487,24 @@ const Render = (() => {
     kitOf(p) { return p.isGK ? this.gk[p.team] : this.kits[p.team]; }
     shadow(p, sp) {
       const ctx = this.ctx, s = this.s * PS, z = p.z || 0;
-      const lifts = 1 + z * 0.5;
+      const lifts = 1 + z * 2.6;
       const dirs = this.night ? [[1, 1], [-1, 1], [1, -1], [-1, -1]] : [[0.7, 0.9]];
-      ctx.fillStyle = `rgba(0,0,0,${this.night ? 0.13 : 0.3})`;
+      ctx.fillStyle = `rgba(0,0,0,${(this.night ? 0.13 : 0.3) * (1 - Math.min(0.5, z * 0.5))})`;
       for (const [dx, dy] of dirs) {
         ctx.beginPath();
-        ctx.ellipse(sp.x + dx * s * 0.22 * lifts, sp.y + dy * s * 0.22 * lifts, s * 0.5 / (1 + z * 0.2), s * 0.38 / (1 + z * 0.2), 0, 0, 7);
+        ctx.ellipse(sp.x + dx * s * 0.22 * lifts, sp.y + dy * s * 0.22 * lifts, s * 0.5 / (1 + z * 0.7), s * 0.38 / (1 + z * 0.7), 0, 0, 7);
         ctx.fill();
       }
     }
     player(p, sp, alpha, now, dt) {
       const ctx = this.ctx, k = this.kitOf(p), lk = Art.look(p.data);
-      const z = p.z || 0, s = this.s * PS * (1 + z * 0.1);
+      const z = p.z || 0, s = this.s * PS * (1 + z * 0.45);
       let a = p.prevAng + (((p.ang - p.prevAng + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * alpha;
       const sa = this.sAng(a);
       const speed = V.len(p.vel);
       const down = p.down > 0 || (p.dive > 0);
-      const lift = z * this.s * 0.5;
+      const lift = z * this.s * 0.9;
+      const air = z > 0.06 && !down && p.slide <= 0 ? (p.air || (p.isGK ? 'catch' : 'head')) : null;
       ctx.save();
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       ctx.translate(sp.x, sp.y - lift);
@@ -486,11 +528,11 @@ const Render = (() => {
       if (down || p.slide > 0) this.bodyDown(ctx, p, k, lk, shorts, sock, skin);
       else {
         // stride: legs swing with distance travelled; arms counter-swing
-        const ph = p.stride * 2.4, amp = Math.min(1, speed / 6.5) * 0.42;
+        const ph = p.stride * 2.4, amp = air ? 0 : Math.min(1, speed / 6.5) * 0.42;
         const lf = Math.sin(ph) * amp, cel = p.celebrate > 0;
-        // legs
+        // legs (tucked up behind him in the air)
         for (const side of [-1, 1]) {
-          const fx = side * lf, fy = side * 0.17;
+          const fx = air ? -0.2 : side * lf, fy = side * (air ? 0.12 : 0.17);
           ctx.strokeStyle = sock; ctx.lineWidth = 0.17;
           ctx.beginPath(); ctx.moveTo(0, side * 0.15); ctx.lineTo(fx, fy); ctx.stroke();
           ctx.fillStyle = '#0b0f17'; ctx.beginPath(); ctx.ellipse(fx + 0.06, fy, 0.11, 0.08, 0, 0, 7); ctx.fill();
@@ -499,7 +541,8 @@ const Render = (() => {
         ctx.fillStyle = shorts; ctx.beginPath(); ctx.ellipse(-0.02, 0, 0.17, 0.3, 0, 0, 7); ctx.fill();
         // arms
         for (const side of [-1, 1]) {
-          const hx = cel ? 0.32 : -side * lf * 0.6, hy = side * (cel ? 0.62 : 0.46);
+          // in the air: a header flings the arms out wide for balance, a keeper reaches up and forward with both gloves
+          const hx = air === 'catch' ? 0.62 : air ? -0.08 : cel ? 0.32 : -side * lf * 0.6, hy = side * (air === 'catch' ? 0.16 : air ? 0.72 : cel ? 0.62 : 0.46);
           ctx.strokeStyle = k.c1; ctx.lineWidth = 0.14;
           ctx.beginPath(); ctx.moveTo(0, side * 0.36); ctx.lineTo(hx * 0.5, side * 0.42); ctx.stroke();
           ctx.strokeStyle = skin; ctx.lineWidth = 0.11;
@@ -507,7 +550,9 @@ const Render = (() => {
           if (p.isGK) { ctx.fillStyle = '#f8fafc'; ctx.beginPath(); ctx.arc(hx, hy, 0.09, 0, 7); ctx.fill(); }
         }
         this.torso(ctx, p, k);
-        this.head(ctx, lk, k);
+        // the head thrown forward to attack the ball
+        if (air === 'head') { ctx.save(); ctx.translate(0.12 * Math.min(1, z * 3), 0); this.head(ctx, lk, k); ctx.restore(); }
+        else this.head(ctx, lk, k);
       }
       ctx.restore();
       if (p.slide > 0 && Math.random() < 0.7) this.spawn(p.pos, 'dust');
@@ -543,6 +588,10 @@ const Render = (() => {
         case 'band': ctx.fillRect(-0.07, -0.5, 0.14, 1); break;
         case 'chevron': ctx.beginPath(); ctx.moveTo(0.05, -0.5); ctx.lineTo(-0.15, 0); ctx.lineTo(0.05, 0.5); ctx.lineTo(-0.05, 0.5); ctx.lineTo(-0.25, 0); ctx.lineTo(-0.05, -0.5); ctx.fill(); break;
         case 'pin': ctx.globalAlpha = 0.7; for (let y = -0.45; y < 0.5; y += 0.12) ctx.fillRect(-0.3, y, 0.6, 0.02); break;
+        case 'quarters': ctx.fillRect(-0.3, -0.5, 0.3, 0.5); ctx.fillRect(0, 0, 0.3, 0.5); break;
+        case 'fade': for (let i = 0; i < 5; i++) { ctx.globalAlpha = (i + 1) / 5; ctx.fillRect(-0.3 + i * 0.12, -0.5, 0.12, 1); } break;
+        case 'goldpin': ctx.fillStyle = '#fbbf24'; for (let y = -0.4; y < 0.5; y += 0.16) ctx.fillRect(-0.3, y, 0.6, 0.025); break;
+        case 'starband': ctx.fillRect(-0.3, -0.07, 0.6, 0.14); ctx.fillStyle = '#fbbf24'; for (const y of [-0.3, 0, 0.3]) { ctx.beginPath(); ctx.arc(0.05, y, 0.045, 0, 7); ctx.fill(); } break;
         default: break;
       }
       ctx.globalAlpha = 1;
@@ -618,7 +667,7 @@ const Render = (() => {
     drawBall(ball, z, dt) {
       const ctx = this.ctx, b = this.m.ball, sp = this.tx(ball);
       const r = 0.24 * this.s * 1.5 * (1 + z * 0.09), y = sp.y - z * this.s * 0.55;
-      this.roll += V.len(b.vel) * dt * 2.2;
+      this.roll += (V.len(b.vel) + (b.owner != null ? b.tw || 0 : 0)) * dt * 2.2;
       ctx.save();
       ctx.translate(sp.x, y);
       const g = ctx.createRadialGradient(-r * 0.35, -r * 0.35, r * 0.1, 0, 0, r);

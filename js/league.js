@@ -157,6 +157,7 @@ const L = (() => {
     if (!isUser(t.id)) return;
     const s = G.finSeason;
     s[cat] = +((s[cat] || 0) + amt).toFixed(3);
+    Fin.record(amt, cat);
     G.finLog.unshift({ d: G.day, s: G.season, amt: +amt.toFixed(3), cat, label });
     if (G.finLog.length > 160) G.finLog.length = 160;
   }
@@ -420,6 +421,7 @@ const L = (() => {
     for (let i = 0; i < 8; i++) mkAcademy(ut, U.ri(15, 17));
     if (cfg.challenge) Career.applyChallenge(cfg.challenge);
     startSeason(true);
+    Fin.ensure();
     G.ready = true;
     News.welcome();
     save();
@@ -764,6 +766,7 @@ const L = (() => {
     G.history.push(summary);
     G.lastSummary = summary;
     Career.seasonEnd(summary);
+    Xtra.seasonVote();
     News.seasonEnd(summary);
     coachCarousel(true);
     save();
@@ -832,6 +835,7 @@ const L = (() => {
     validateUser();
     startSeason(false);
     Career.newSeason && Career.newSeason();
+    Fin.newSeason();
     save();
   }
   function retires(p) {
@@ -1124,7 +1128,7 @@ const L = (() => {
       t.form.push(r); if (t.form.length > 10) t.form.shift();
       const c = t.coach != null ? G.coaches[t.coach] : null;
       if (c) { if (r === 'W') c.w++; else if (r === 'D') c.d++; else c.l++; }
-      if (isUser(t.id)) { if (r === 'W') G.mgr.w++; else if (r === 'D') G.mgr.d++; else G.mgr.l++; }
+      if (isUser(t.id)) { if (r === 'W') G.mgr.w++; else if (r === 'D') G.mgr.d++; else G.mgr.l++; if (r === 'W') Fin.onWin(t, f); }
       // morale
       const delta = r === 'W' ? 4 : r === 'D' ? 0 : -4;
       const played = new Set((res.players || []).filter(x => x.team === s && x.min > 0).map(x => x.pid));
@@ -1162,18 +1166,20 @@ const L = (() => {
       f.att = att;
       const gate = (att * ht.fin.ticket) / 1e6 * (f.comp === 'X' ? 1.6 : f.comp === 'C' ? 1.2 : 1) * (ht.ident === 'entertainers' ? 1 + 0.04 * f.hs : 1);
       logMoney(ht, gate, 'gate', `Gate receipts vs ${sides[1].abbr}`);
+      if (isUser(ht.id)) Fin.matchday(ht, att, f);
     }
+    Xtra.afterMatch(f, res);
     if (f.comp === 'S') { for (const t of sides) logMoney(t, DATA.PRIZE.showcase * (winnerOf(f) === t.id ? 1.4 : 1), 'events', DATA.SHOWCASE); }
     if (f.comp === 'C') cupAdvance(f.lg);
     if (f.comp === 'X') contAdvance();
     if (f.comp === 'I') { invAdvance(); if (f.rd === 'F' || f.rd === '3rd') invFinish(f); }
   }
-  function attendance(t, opp, f) {
+  function attendance(t, opp, f, ticket = t.fin.ticket) {
     const form = t.form.slice(-5).filter(x => x === 'W').length - t.form.slice(-5).filter(x => x === 'L').length;
     const big = f.comp === 'X' || f.comp === 'C' && (f.rd === 'SF' || f.rd === 'F') ? 0.25 : 0;
-    const price = t.fin.ticket / (t.tier === 0 ? 32 : 16);
+    const price = ticket / (t.tier === 0 ? 32 : 16);
     const wxm = { rain: 0.92, storm: 0.8, snow: 0.85, heat: 0.95 }[f.wx && f.wx.id] || 1;
-    const fill = U.clamp(0.4 + t.rep / 180 + opp.rep / 600 + form * 0.03 + big - (price - 1) * 0.45, 0.2, 1) * wxm;
+    const fill = U.clamp(0.4 + t.rep / 180 + opp.rep / 600 + form * 0.03 + big - (price - 1) * 0.45 + (isUser(t.id) ? Fin.fillBonus(t) : 0), 0.2, 1) * wxm;
     return Math.round(t.stadium.cap * fill);
   }
 
@@ -1227,10 +1233,11 @@ const L = (() => {
       const p = U.pick(squad(u).filter(x => x.inj <= 0));
       if (p) { p.inj = U.ri(2, 12); Career.inbox({ type: 'injury', title: `${p.ln} hurt in training`, body: `Hard sessions take their toll: out for ${p.inj} days.` }); }
     }
-    if (G.day % 7 === 0) weekly();
+    if (G.day % 7 === 0) { weekly(); Xtra.checkUnlocks(); }
     if (windowOpen()) transferDay();
     scoutingDay();
     Career.daily();
+    Xtra.daily();
     // midseason showcase invitation
     if (G.day === SEA.SHOWCASE - 6 && !G.showcase) Career.showcaseInvite();
     if (G.day === SEA.WINDOWS[1][0]) News.windowOpens();
@@ -1247,7 +1254,9 @@ const L = (() => {
       const wages = payroll(t) / 1000;
       const ops = 0.06 + 0.02 * t.facilities + (isUser(t.id) ? staffWages() / 1000 + 0.015 * t.acad.level : 0.03);
       logMoney(t, tv, 'tv', 'Broadcast money');
-      logMoney(t, spon + merch, 'spon', 'Sponsorship & merchandise');
+      // the user's club earns from real sponsor deals and its own commercial set-up
+      if (isUser(t.id)) Fin.weekly(t);
+      else logMoney(t, spon + merch, 'spon', 'Sponsorship & merchandise');
       logMoney(t, -wages, 'wages', 'Player wages');
       logMoney(t, -ops, 'ops', isUser(t.id) ? 'Staff, academy & running costs' : 'Running costs');
     }
@@ -1313,11 +1322,9 @@ const L = (() => {
     if (p.tid >= 0 && team(p.tid).tier < t.tier && p.ovr > lvl + 4) return 0.15;
     return U.clamp(1 - Math.max(0, gap - 4) / 14 + (G.mgr.rep - 40) / 200, 0.05, 1);
   }
-  function wageRoom() {
-    const t = user();
-    return +(weeklyIncome(t) * 1000 * 0.75 - payroll(t)).toFixed(0);
-  }
-  function weeklyIncome(t) { return (t.tier === 0 ? 0.26 : 0.08) + 0.0042 * t.rep + (t.stadium.cap * t.fin.ticket * 0.7) / 1e6 / 2; }
+  // weekly budget left for player wages ($K): forecast income, less the players and staff already paid
+  function wageRoom() { return Fin.wageRoom(user()); }
+  function weeklyIncome(t) { return Fin.forecast(t).income; }
   function completeSigning(pid, fee, givePids, wage, yrs) {
     const p = P(pid), from = p.tid >= 0 ? team(p.tid) : null, u = user();
     if (fee > u.fin.bal + 0.001) return { ok: false, why: 'Not enough money in the bank.' };
@@ -1653,6 +1660,8 @@ const L = (() => {
     for (let i = 0; i < 6; i++) mkAcademy(nu, U.ri(15, 17));
     G.board.conf = 60;
     G.board.obj = Career.objectives();
+    // sponsors signed with the club, not the manager
+    Fin.ensure();
     // the academy league follows the new division from next season; this season, leave it as is
     News.userHired(nu);
     save();
@@ -1672,7 +1681,7 @@ const L = (() => {
     if (!cost || t.fin.bal < cost) return false;
     if (kind === 'academy' && t.acad.level >= 5) return false;
     if (kind === 'facilities' && t.facilities >= 5) return false;
-    logMoney(t, -cost, 'fees', `Upgrade: ${kind}`);
+    logMoney(t, -cost, 'build', `Upgrade: ${kind}`);
     if (kind === 'stadium') t.stadium.cap += 5000;
     else if (kind === 'academy') t.acad.level++;
     else t.facilities++;
@@ -1699,6 +1708,8 @@ const L = (() => {
       for (const t of G.teams) if (t.tac) TAC.normalize(t.tac);
       // saves from before innate hallmarks (or before hallmarks at all): everyone rolls his set once
       if (G.hmV !== HM_V) { for (const p of Object.values(G.players)) { rollHallmarks(p); delete p.hmTrain; } G.hmV = HM_V; }
+      // saves from before sponsor deals and money history get them now
+      Fin.ensure();
       return true;
     } catch (e) { return false; }
   }
@@ -1711,7 +1722,7 @@ const L = (() => {
   return {
     team, user, P, squad, league, isUser, calcOvr, roleRating, mkPlayer, mkCoach, marketWage, value, payroll, staffWages, logMoney, teamLevel,
     applyPhilosophy, applyRoles, growthInfo, setPlan, autoFocus, focusRole, hmMargin, hmFits, rollHallmarks, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
-    dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, resultFor, seasonRecord, lastUserFixture, attendance,
+    dateStr, rollWeather, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, resultFor, seasonRecord, lastUserFixture, attendance,
     table, acadTableRows, position, finalStanding, tableLg, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
     MIN_SQUAD, canLose, squadFloorWhy, askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,
     squadRole, REGIONS, scoutCost, startScouting, scoutPlayer, signYouth, knowledge, seenOvr, youthPool, refreshYouthPool, POOL_DAYS,
