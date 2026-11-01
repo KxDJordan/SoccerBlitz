@@ -396,3 +396,12 @@ textarea.txt { width: 100%; min-height: 90px; border-radius: 14px; border: 1px s
 .theme-sw .pv { height: 54px; border-radius: 11px; position: relative; overflow: hidden; margin-bottom: 6px; }
 .theme-sw .pv i { position: absolute; border-radius: 6px; }
 .theme-sw b { font-size: 12px; display: block; }
+
+/* ── hallmarks ── */
+.hmwrap { display: flex; flex-wrap: wrap; gap: 6px; }
+.hmchip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text); font-size: 12.5px; font-weight: 700; }
+.hmchip span { font-size: 14px; }
+.hmchip.elite { background: linear-gradient(135deg, color-mix(in srgb, #f5c542 26%, var(--surface-2)), var(--surface-2)); border-color: #f5c542; box-shadow: 0 0 0 1px rgba(245, 197, 66, .25), 0 4px 14px rgba(245, 197, 66, .18); }
+.hmi { display: inline-flex; gap: 2px; margin-left: 2px; }
+.hmi i { font-style: normal; font-size: 11px; line-height: 16px; width: 17px; text-align: center; border-radius: 50%; background: var(--surface-3); }
+.hmi i.e { box-shadow: 0 0 0 1.5px #f5c542; background: color-mix(in srgb, #f5c542 22%, var(--surface-3)); }

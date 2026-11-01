@@ -219,7 +219,7 @@
   function kidSheet(pid) {
     const p = P(pid);
     if (!p) return;
-    UI.sheet(`${pcard(p)}${devPanel(p)}
+    UI.sheet(`${pcard(p)}${hallmarksHTML(p)}${devPanel(p)}
       <div class="grid2 mt12"><button class="btn primary ${p.age < 17 ? 'off' : ''}" data-a="promoteKid" data-v="${pid}">${p.age < 17 ? `Promote at 17` : 'Promote to first team'}</button><button class="btn danger" data-a="releaseKid" data-v="${pid}">Release</button></div>`, { vars: UI.teamVars(L.user()), refresh: () => kidSheet(pid) });
   }
   // ── development plan: a position to grow into, a role inside it, and what that does to his growth ──
@@ -251,6 +251,7 @@
       ${retraining ? `<div class="card tight"><div class="flex between small"><span>🔄 Retraining <b>${p.pos} → ${target}</b> (${esc(DATA.POS_NAME[target])})</span><span class="muted">${Math.round(g.progress * 100)}% · ~${Math.max(1, Math.ceil(g.weeks * (1 - g.progress)))} wks left</span></div><div class="prog mt8"><i style="width:${g.progress * 100}%"></i></div><div class="tiny dim mt4">Would rate ${L.calcOvr(p, target)} there today · ${Math.round(TAC.fam(p, target) * 100)}% comfortable · growth slowed 15% while learning</div></div>` : ''}
       <div class="kicker mt12 mb8">2 · Role</div><p class="tiny muted" style="margin-top:-2px">60% of his growth goes into the role's three key attributes; the rest follows the ${target} position.</p>
       ${roles.map(r => { const rr = L.roleRating(p, r.id, target); return `<button class="rolefit${focus && focus.id === r.id ? ' on' : ''}" style="width:100%;text-align:left" data-a="devRole" data-v="${p.id}:${r.id}"><div><div class="bold small">${esc(r.name)} <span class="tag">${r.short}</span></div><div class="tiny muted">${r.keys.map(k => DATA.ATTR_NAME[k]).join(' · ')}</div></div><span class="ovr ${U.ovrClass(rr)}">${rr}</span></button>`; }).join('')}
+      ${hmTrainPanel(p)}
       <div class="kicker mt12 mb8">Projected over a season</div>${attrsHTML(p, focus ? focus.keys : [], g.proj)}`;
   }
   function planLine(p) {
@@ -302,6 +303,29 @@
     const groups = DATA.ATTR_GROUPS.filter(g => g.id !== 'gk' || p.pos === 'GK');
     return `<div class="card tight">${groups.map(g => `<div class="kicker mt4 mb8">${g.label}</div>${g.keys.map(key => { let v = p.a[DATA.AK[key]]; if (fuzz) v = Math.round(v / 5) * 5; const gain = proj ? proj[DATA.AK[key]] : 0; return `<div class="attr${keys.includes(key) ? ' key' : ''}"${proj ? ' style="grid-template-columns:92px 1fr 62px"' : ''}><span>${DATA.ATTR_NAME[key]}</span><div class="bar" style="position:relative"><i class="${U.ovrClass(v)}" style="width:${v}%"></i>${gain > 0 ? `<i style="position:absolute;top:0;left:${v}%;width:${gain}%;background:var(--good);opacity:.55"></i>` : ''}</div><b>${fuzz ? '~' : ''}${v}${proj ? ` <span class="tiny ${gain > 0 ? 'good' : 'dim'}" style="font-family:var(--f-body)">${gain > 0 ? `+${gain}` : '·'}</span>` : ''}</b></div>`; }).join('')}`).join('')}</div>`;
   }
+  // ── hallmarks: what he's known for, and what he's working on ──
+  function hmChip(id, lvl) {
+    const h = DATA.HM[id];
+    return h ? `<button class="hmchip${lvl === 2 ? ' elite' : ''}" data-a="hmInfo" data-v="${id}:${lvl}"><span>${h.icon}</span>${esc(h.name)}${lvl === 2 ? ' ★' : ''}</button>` : '';
+  }
+  function hallmarksHTML(p) {
+    const mine = p.tid === G.userTeamId, k = L.knowledge(p), ids = Object.keys(p.hm || {});
+    const head = `<div class="kicker mt12 mb8">Hallmarks <span class="dim">· ${ids.length}/${Math.max(ids.length, L.hmSlots(p))}</span></div>`;
+    if (!mine && k < 2) return `${head}<div class="card tight small muted">${ids.length ? `${ids.length} hallmark${ids.length > 1 ? 's' : ''}: scout him to find out which.` : 'None that the scouts have heard of.'}</div>`;
+    const order = DATA.HM_GROUPS.map(g => g[0]);
+    ids.sort((a, b) => p.hm[b] - p.hm[a] || order.indexOf(DATA.HM[a].g) - order.indexOf(DATA.HM[b].g));
+    const tr = p.hmTrain && DATA.HM[p.hmTrain.id];
+    return `${head}<div class="hmwrap">${ids.length ? ids.map(id => hmChip(id, p.hm[id])).join('') : '<span class="small muted">No hallmarks yet.</span>'}</div>
+      ${tr && mine ? `<div class="tiny muted mt8">🏋️ Training: <b>${tr.icon} ${esc(tr.name)}${p.hm[tr.id] ? ' ★' : ''}</b> · ${Math.round(p.hmTrain.prog * 100)}%</div>` : ''}`;
+  }
+  A.hmInfo = v => { const [id, lvl] = v.split(':'), h = DATA.HM[id]; if (h) UI.toast(`${h.icon} <b>${esc(h.name)}${lvl === '2' ? ' ★ Elite' : ''}</b>: ${esc(lvl === '2' ? h.elite : h.desc)}`); };
+  function hmTrainPanel(p) {
+    const cands = L.hmCandidates(p), tr = p.hmTrain;
+    const reqTxt = (h, lvl) => Object.keys(h.req).map(k => { const need = h.req[k] + (lvl ? DATA.HM_ELITE : 0), have = p.a[DATA.AK[k]]; return `<span class="${have >= need ? 'good' : 'warn'}">${DATA.ATTR_SHORT[k]} ${have}/${need}</span>`; }).join(' · ');
+    return `<div class="kicker mt12 mb8">3 · Hallmark training</div><p class="tiny muted" style="margin-top:-2px">Pick one hallmark to work on. Progress builds week by week (training intensity speeds it up), and part of his growth goes into the attributes it needs. It lands once both are complete.${L.hmSlots(p) <= Object.keys(p.hm || {}).length ? ' His hallmark slots are full, so he can only master the ones he has.' : ''}</p>
+      ${cands.length ? cands.map(({ h, lvl, weeks }) => { const on = tr && tr.id === h.id; return `<button class="rolefit${on ? ' on' : ''}" style="width:100%;text-align:left" data-a="hmTrain" data-v="${p.id}:${h.id}"><div><div class="bold small">${h.icon} ${lvl ? 'Master ' : ''}${esc(h.name)}${lvl ? ' ★' : ''}</div><div class="tiny muted">${esc(lvl ? h.elite : h.desc)}</div><div class="tiny mt4">${reqTxt(h, lvl)}</div>${on ? `<div class="prog mt4"><i style="width:${Math.round(tr.prog * 100)}%"></i></div>` : ''}</div><span class="tiny muted">${on ? `${Math.round(tr.prog * 100)}%` : `~${weeks}w`}</span></button>`; }).join('') : '<div class="card tight small muted">Nothing within reach yet: his attributes need to grow first.</div>'}`;
+  }
+  A.hmTrain = v => { const [pid, id] = v.split(':'); L.setHmTrain(+pid, id); UI.refreshSheet(); };
   function rolesHTML(p) {
     const roles = TAC.rolesFor(p.pos).map(r => ({ r, v: L.roleRating(p, r.id) })).sort((a, b) => b.v - a.v).slice(0, 4);
     const max = roles[0] ? roles[0].v : 1;
@@ -330,6 +354,7 @@
       ${mine ? planLine(p) : ''}
       <div class="kicker mt12 mb8">This season</div><div class="kv mb12"><div><b>${st.gp}</b><span>Games</span></div><div><b>${st.g}</b><span>Goals</span></div><div><b>${st.a}</b><span>Assists</span></div><div><b>${avg}</b><span>Avg rating</span></div><div><b>${st.motm}</b><span>MOTM</span></div><div><b>${st.hits || 0}</b><span>Big hits</span></div></div>
       ${rolesHTML(p)}
+      ${hallmarksHTML(p)}
       ${attrsHTML(p, p.focus && TAC.ROLES[p.focus] ? TAC.ROLES[p.focus].keys : [])}
       ${p.hist && p.hist.length ? `<div class="kicker mt12 mb8">History</div><table class="tbl"><tr><th class="l">Season</th><th class="l">Club</th><th>GP</th><th>G</th><th>A</th><th>Rtg</th></tr>${p.hist.map(h => `<tr><td class="l">S${h.s}</td><td class="l">${T(h.tid) ? esc(T(h.tid).abbr) : '—'}</td><td>${h.gp}</td><td>${h.g}</td><td>${h.a}</td><td>${h.rat}</td></tr>`).join('')}</table>` : ''}
       <div class="tiny dim mt12">${esc(DATA.PERSONALITIES[p.pers] ? DATA.PERSONALITIES[p.pers].desc : '')} Career: ${p.car.gp} games, ${p.car.g} goals.${p.awards && p.awards.length ? ` 🏅 ${p.awards.map(a => ({ boot: 'Golden Boot', poty: 'Player of the Season', young: 'Young Player' }[a.k] + ` S${a.s}`)).join(', ')}` : ''}</div>`,

@@ -85,12 +85,96 @@ const L = (() => {
       const head = age <= 18 ? U.gauss(16, 7) : age <= 21 ? U.gauss(10, 6) : age <= 24 ? U.gauss(5, 4) : age <= 27 ? U.gauss(1.5, 2) : 0;
       p.pot = Math.round(U.clamp(p.ovr + Math.max(0, head), p.ovr, 97));
     }
+    if (!p.hm) rollHallmarks(p);
     p.wage = marketWage(p);
     p.yrs = U.ri(1, age < 24 ? 5 : age < 30 ? 4 : 2);
     G.players[id] = p;
     return p;
   }
   const blankSt = () => ({ gp: 0, g: 0, a: 0, rat: 0, motm: 0, cs: 0, yc: 0, rc: 0, min: 0, hits: 0 });
+
+  // ── hallmarks ──
+  // how many a player can carry: the better he is, the more tricks he has
+  const hmSlots = p => (p.ovr >= 84 ? 5 : p.ovr >= 78 ? 4 : p.ovr >= 70 ? 3 : p.ovr >= 62 ? 2 : p.ovr >= 52 ? 1 : 0);
+  const hmCount = p => Object.keys(p.hm || {}).length;
+  // how far above the requirement his weakest key attribute sits (negative = short of it)
+  function hmMargin(p, h) {
+    if (!h || !!h.gk !== (p.pos === 'GK') || (h.pos && !h.pos.includes(p.pos))) return -99;
+    let m = 99;
+    for (const k in h.req) m = Math.min(m, p.a[AK[k]] - h.req[k]);
+    return m;
+  }
+  // the ones he's born with: what his attributes clearly support, best first, some left to learn
+  function rollHallmarks(p) {
+    p.hm = {};
+    const n = hmSlots(p);
+    let elites = 0;
+    for (const { h, m } of DATA.HALLMARKS.map(h => ({ h, m: hmMargin(p, h) })).filter(x => x.m >= 0).sort((a, b) => b.m - a.m)) {
+      if (hmCount(p) >= n) break;
+      if (rng() < 0.3) continue;
+      const elite = m >= DATA.HM_ELITE && p.ovr >= 76 && elites < 2 && rng() < 0.55;
+      if (elite) elites++;
+      p.hm[h.id] = elite ? 2 : 1;
+    }
+  }
+  // what a hallmark asks of him: the learn target, or the mastery target for the Elite version
+  const hmTarget = (p, id) => ((p.hm || {})[id] ? DATA.HM_ELITE : 0);
+  // what he could work on in training: hallmarks within reach, or ones he has and could master
+  function hmCandidates(p) {
+    const out = [];
+    for (const h of DATA.HALLMARKS) {
+      const m = hmMargin(p, h), lvl = (p.hm || {})[h.id] || 0;
+      if (m === -99 || lvl === 2) continue;
+      if (lvl === 1 ? m >= DATA.HM_ELITE - 8 : m >= -8 && hmCount(p) < Math.max(1, hmSlots(p))) out.push({ h, m, lvl, need: hmTarget(p, h.id) - m, weeks: hmWeeks(p, h.id) });
+    }
+    return out.sort((a, b) => a.need - b.need);
+  }
+  function hmWeeks(p, id) {
+    const base = p.age <= 21 ? 6 : p.age <= 25 ? 8 : p.age <= 29 ? 11 : 15;
+    return Math.round(base * ((p.hm || {})[id] ? 1.6 : 1));
+  }
+  function setHmTrain(pid, id) {
+    const p = P(pid);
+    if (!p) return;
+    if (!id || (p.hmTrain && p.hmTrain.id === id)) p.hmTrain = null;
+    else if (hmCandidates(p).some(c => c.h.id === id)) p.hmTrain = { id, prog: 0 };
+    save();
+  }
+  function hmNote(p, title, body) {
+    if (p.tid === G.userTeamId && typeof Career !== 'undefined') Career.inbox({ type: 'scout', pid: p.id, title, body, actions: [{ label: 'View player', act: 'player', v: p.id }] });
+  }
+  // a week on the training ground: progress fills, and the hallmark lands once his attributes are there too
+  function hmTrainWeek(p) {
+    const tr = p.hmTrain;
+    if (!tr) return;
+    const h = DATA.HM[tr.id];
+    if (!h) { p.hmTrain = null; return; }
+    const intensity = { light: 0.75, normal: 1, hard: 1.3 }[G.train] || 1;
+    tr.prog = Math.min(1, tr.prog + intensity / hmWeeks(p, tr.id));
+    if (tr.prog < 1 || hmMargin(p, h) < hmTarget(p, tr.id)) return;
+    const elite = !!(p.hm || {})[tr.id];
+    p.hm = p.hm || {};
+    p.hm[tr.id] = elite ? 2 : 1;
+    p.hmTrain = null;
+    hmNote(p, `${h.icon} ${p.ln} ${elite ? 'masters' : 'learns'} ${h.name}${elite ? ' ★' : ''}`, `${p.fn} ${p.ln} has ${elite ? 'mastered the Elite version of' : 'added'} ${h.name} to his game: ${elite ? h.elite : h.desc}`);
+  }
+  // each summer: the young pick things up naturally, and the old lose what their legs no longer support
+  function hmSeason(p) {
+    if (!p.hm) rollHallmarks(p);
+    for (const id in p.hm) {
+      const h = DATA.HM[id], m = hmMargin(p, h);
+      if (!h || m < -6) { delete p.hm[id]; if (h) hmNote(p, `${h.icon} ${p.ln} loses ${h.name}`, `Age has caught up with ${p.fn} ${p.ln}: he no longer has the attributes for ${h.name}.`); }
+      else if (p.hm[id] === 2 && m < DATA.HM_ELITE - 6) p.hm[id] = 1;
+    }
+    if (rng() > (p.age <= 23 ? 0.45 : 0.25)) return;
+    const up = Object.keys(p.hm).find(id => p.hm[id] === 1 && p.ovr >= 76 && hmMargin(p, DATA.HM[id]) >= DATA.HM_ELITE);
+    if (up && rng() < 0.4) { p.hm[up] = 2; hmNote(p, `${DATA.HM[up].icon} ${p.ln} masters ${DATA.HM[up].name} ★`, `Over the season ${p.fn} ${p.ln} has made ${DATA.HM[up].name} his trademark: ${DATA.HM[up].elite}`); return; }
+    if (hmCount(p) >= hmSlots(p)) return;
+    const c = DATA.HALLMARKS.filter(h => !p.hm[h.id] && hmMargin(p, h) >= 0).sort((a, b) => hmMargin(p, b) - hmMargin(p, a))[0];
+    if (c) { p.hm[c.id] = 1; hmNote(p, `${c.icon} ${p.ln} picks up ${c.name}`, `${p.fn} ${p.ln} has developed a new hallmark: ${c.desc}`); }
+  }
+  // what his hallmarks are worth in a quick sim (a few tenths of an overall point each)
+  const hmBonus = p => { let s = 0; for (const id in p.hm || {}) s += p.hm[id] === 2 ? 0.8 : 0.35; return s; };
   function retarget(p) { p.ovr = calcOvr(p); if (p.pot < p.ovr) p.pot = p.ovr; }
 
   // ── money ──
@@ -106,7 +190,8 @@ const L = (() => {
     const ageM = p.age <= 19 ? 1.5 : p.age <= 21 ? 1.4 : p.age <= 24 ? 1.25 : p.age <= 27 ? 1.1 : p.age <= 29 ? 0.9 : p.age <= 31 ? 0.62 : p.age <= 33 ? 0.38 : 0.2;
     const potM = 1 + Math.max(0, p.pot - p.ovr) * (p.age < 24 ? 0.045 : 0.015);
     const contract = p.tid >= 0 ? (p.yrs <= 0 ? 0.35 : p.yrs === 1 ? 0.7 : 1) : 0;
-    return Math.max(0.02, +(base * ageM * potM * (p.tid >= 0 ? contract : 1)).toFixed(2));
+    const hmM = 1 + 0.085 * hmBonus(p); // ~+3% a hallmark, ~+7% an elite one
+    return Math.max(0.02, +(base * ageM * potM * hmM * (p.tid >= 0 ? contract : 1)).toFixed(2));
   }
   function payroll(t) { return U.sum(squad(t).map(p => p.wage)); }
   function staffWages() { return U.sum(Object.values(G.staff || {}).flat().map(id => (G.coaches[id] ? G.coaches[id].wage : 0))); }
@@ -905,11 +990,15 @@ const L = (() => {
     const pos = p.trainPos || p.pos, w = DATA.OVR_W[pos];
     const role = p.focus && TAC.ROLES[p.focus] && TAC.ROLES[p.focus].slots.includes(pos) ? TAC.ROLES[p.focus] : null;
     const keys = role ? role.keys.map(k => AK[k]) : [];
+    // hallmark training: a share of the work goes into whatever attributes are still short of its requirement
+    const hmh = p.hmTrain && DATA.HM[p.hmTrain.id], hmT = hmh ? hmTarget(p, hmh.id) : 0;
     let guard = 0;
     while (p.gp >= 1 && guard++ < 40) {
       p.gp -= 1;
       let i;
-      if (keys.length && rng() < 0.6) i = U.pick(keys);
+      const short = hmh ? Object.keys(hmh.req).filter(k => p.a[AK[k]] < hmh.req[k] + hmT).map(k => AK[k]) : [];
+      if (short.length && rng() < 0.35) i = U.pick(short);
+      else if (keys.length && rng() < 0.6) i = U.pick(keys);
       else i = U.wpick(w.map((x, k) => k), k => w[k] + 0.01);
       if (p.a[i] < 99) p.a[i]++;
     }
@@ -925,6 +1014,7 @@ const L = (() => {
   function weeklyDev(p, t) {
     if (p.inj > 0) return;
     retrainWeek(p);
+    hmTrainWeek(p);
     const gain = growthRate(p) * potFactor(p) * devMult(p, t);
     if (gain > 0) spend(p, gain * 6.5);
     if (p.age >= 30 && rng() < (p.age - 29) * 0.06 * (p.pers === 'pro' ? 0.6 : 1) * (t && t.ident === 'oldguard' ? 0.6 : 1)) decline(p, 1);
@@ -934,6 +1024,7 @@ const L = (() => {
     // potential re-rolls a touch for the young
     if (p.age <= 22) p.pot = Math.round(U.clamp(p.pot + U.gauss(0, 2), p.ovr, 97));
     retarget(p);
+    hmSeason(p);
   }
 
   // ── strength for quick sims ──
@@ -944,7 +1035,7 @@ const L = (() => {
     let att = 0, aw = 0, def = 0, dw = 0, mid = 0, mw = 0;
     players.forEach((p, i) => {
       const pos = fo.slots[i] ? fo.slots[i].pos : p.pos;
-      const g = DATA.POS_GROUP[pos], v = calcOvr(p, pos) * TAC.fam(p, pos) * (0.85 + 0.15 * p.fit / 100) * (0.96 + p.mor / 1250);
+      const g = DATA.POS_GROUP[pos], v = (calcOvr(p, pos) + hmBonus(p)) * TAC.fam(p, pos) * (0.85 + 0.15 * p.fit / 100) * (0.96 + p.mor / 1250);
       if (g === 'FWD') { att += v * 1.2; aw += 1.2; mid += v * 0.3; mw += 0.3; }
       else if (g === 'MID') { mid += v; mw += 1; att += v * 0.5; aw += 0.5; def += v * 0.35; dw += 0.35; }
       else if (g === 'DEF') { def += v; dw += 1; mid += v * 0.15; mw += 0.15; }
@@ -1590,6 +1681,8 @@ const L = (() => {
       G.ready = true;
       // older saves had separate in/out-of-possession shapes: fold them into one shape with roles
       for (const t of G.teams) if (t.tac) TAC.normalize(t.tac);
+      // saves from before hallmarks: give every player the ones his attributes support
+      for (const p of Object.values(G.players)) if (!p.hm) rollHallmarks(p);
       return true;
     } catch (e) { return false; }
   }
@@ -1601,7 +1694,7 @@ const L = (() => {
 
   return {
     team, user, P, squad, league, isUser, calcOvr, roleRating, mkPlayer, mkCoach, marketWage, value, payroll, staffWages, logMoney, teamLevel,
-    applyPhilosophy, applyRoles, growthInfo, setPlan, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
+    applyPhilosophy, applyRoles, growthInfo, setPlan, hmSlots, hmMargin, hmCandidates, hmWeeks, setHmTrain, rollHallmarks, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
     dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, resultFor, seasonRecord, lastUserFixture, attendance,
     table, acadTableRows, position, finalStanding, tableLg, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
     MIN_SQUAD, canLose, squadFloorWhy, askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,

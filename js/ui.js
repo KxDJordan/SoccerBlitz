@@ -87,7 +87,13 @@ const UI = (() => {
   function playerRow(p, opts = {}) {
     const right = opts.right != null ? opts.right : ovrB(p);
     const meta = opts.meta != null ? opts.meta : `${p.age} · ${esc(p.nat)}${p.tid >= 0 && !p.acad && p.tid !== G.userTeamId && G.teams[p.tid] ? ` · ${esc(G.teams[p.tid].abbr)}` : ''}`;
-    return `<div class="row tap" data-a="${opts.act || 'player'}" data-v="${opts.v != null ? opts.v : p.id}">${face(p, 40)}<div class="grow"><div class="flex" style="gap:6px">${posB(p.pos)}<span class="nm ellip">${esc(p.fn[0])}. ${esc(p.ln)}</span>${status(p)}</div><div class="meta">${meta}</div></div>${opts.mid || ''}${right}</div>`;
+    return `<div class="row tap" data-a="${opts.act || 'player'}" data-v="${opts.v != null ? opts.v : p.id}">${face(p, 40)}<div class="grow"><div class="flex" style="gap:6px">${posB(p.pos)}<span class="nm ellip">${esc(p.fn[0])}. ${esc(p.ln)}</span>${status(p)}${hmIcons(p)}</div><div class="meta">${meta}</div></div>${opts.mid || ''}${right}</div>`;
+  }
+  // a player's hallmarks as a row of little icons (gold ring = elite); hidden until he's been scouted
+  function hmIcons(p) {
+    const ids = Object.keys(p.hm || {});
+    if (!ids.length || (p.tid !== G.userTeamId && L.knowledge(p) < 2)) return '';
+    return `<span class="hmi">${ids.sort((a, b) => p.hm[b] - p.hm[a]).slice(0, 4).map(id => DATA.HM[id] ? `<i class="${p.hm[id] === 2 ? 'e' : ''}" title="${esc(DATA.HM[id].name)}">${DATA.HM[id].icon}</i>` : '').join('')}</span>`;
   }
   function teamChip(t, size = 22) { return `<span class="flex" style="gap:6px;display:inline-flex">${crest(t, size)}<b>${esc(t.abbr)}</b></span>`; }
   function wxChip(wx) { if (!wx) return ''; const w = DATA.WEATHER[wx.id]; const ko = DATA.KICKOFF.find(k => k.id === wx.ko); return `<span class="wx">${WXI[wx.id] || ''} ${w ? w.name : ''} · ${wx.temp}°C${ko ? ` · ${ko.label}` : ''}</span>`; }
