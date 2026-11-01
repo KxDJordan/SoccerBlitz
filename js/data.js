@@ -28,39 +28,48 @@ const DATA = (() => {
   ];
   const PHYSICAL = new Set([0, 1, 2, 3]);
 
-  // ── hallmarks: the signature things a player is known for. Earned from his attributes (req), learned in
-  // training, and mastered into an Elite version at req + HM_ELITE. Each one changes a specific action in the engine. ──
+  // ── hallmarks: the signature things a player is known for. They're innate: rolled once when he's created, from
+  // the player he'll become (his attributes projected toward his potential) and his position, and they never change.
+  // Some belong to certain positions only. Each one changes a specific action in the engine; ★ Elite is a stronger version. ──
   const HM_GROUPS = [['shoot', 'Shooting'], ['pass', 'Passing'], ['ball', 'Ball control'], ['def', 'Defending'], ['phys', 'Physical'], ['gk', 'Goalkeeping']];
+  const ATT = ['ST', 'LW', 'RW', 'AM'], BACK = ['CB', 'LB', 'RB', 'DM'], WIDE = ['LB', 'RB', 'LM', 'RM', 'LW', 'RW'];
   const HALLMARKS = [
     { id: 'bender', name: 'Bender', icon: '🌀', g: 'shoot', req: { curve: 70, finishing: 58 }, desc: 'Curls shots around the keeper and inside the far post.', elite: 'Bends it in from anywhere around the box.' },
     { id: 'cannon', name: 'Cannon', icon: '💥', g: 'shoot', req: { strength: 64, finishing: 66 }, desc: 'Hits thunderbolts from distance.', elite: 'Long-range rockets that knock keepers over.' },
     { id: 'icevein', name: 'Ice Veins', icon: '🧊', g: 'shoot', req: { composure: 74, finishing: 64 }, desc: 'Shrugs off pressure in front of goal; nerveless from the spot.', elite: 'Never rushed, never flustered.' },
-    { id: 'chipper', name: 'Chipper', icon: '🪶', g: 'shoot', req: { finishing: 68, vision: 60 }, desc: 'Dinks it over keepers who rush out.', elite: 'The chip is his party piece one-on-one.' },
+    { id: 'chipper', name: 'Chipper', icon: '🪶', g: 'shoot', pos: ATT, req: { finishing: 68, vision: 60 }, desc: 'Attackers only. Dinks it over keepers who rush out.', elite: 'The chip is his party piece one-on-one.' },
     { id: 'deadeye', name: 'Dead Eye', icon: '🎯', g: 'shoot', req: { curve: 72, crossing: 60 }, desc: 'Free-kick and corner specialist.', elite: 'Free kicks in range are a real threat to score.' },
     { id: 'powerhead', name: 'Power Header', icon: '🗿', g: 'shoot', req: { heading: 70, finishing: 54 }, desc: 'Attacks crosses with real venom.', elite: 'Headers fly in like shots.' },
-    { id: 'acrobat', name: 'Acrobat', icon: '🤸', g: 'shoot', req: { accel: 70, finishing: 66 }, desc: 'Volleys, scissor kicks and overheads.', elite: 'Spectacular finishes are part of his game.' },
-    { id: 'threader', name: 'Threader', icon: '🧵', g: 'pass', req: { vision: 74, passing: 68 }, desc: 'Slides through balls between defenders.', elite: 'Finds the killer pass nobody else sees.' },
+    { id: 'acrobat', name: 'Acrobat', icon: '🤸', g: 'shoot', pos: ATT, req: { accel: 70, finishing: 66 }, desc: 'Attackers only. Volleys, scissor kicks and overheads.', elite: 'Spectacular finishes are part of his game.' },
+    { id: 'fox', name: 'Box Fox', icon: '🦊', g: 'shoot', pos: ['ST'], req: { finishing: 68, positioning: 64 }, desc: 'Strikers only. Lives in the six-yard box and finishes first time.', elite: 'Every scrap in the box ends up in the net.' },
+    { id: 'threader', name: 'Threader', icon: '🧵', g: 'pass', pos: ['DM', 'MF', 'AM', 'LM', 'RM', 'LW', 'RW', 'ST'], req: { vision: 74, passing: 68 }, desc: 'Slides through balls between defenders.', elite: 'Finds the killer pass nobody else sees.' },
     { id: 'metronome', name: 'Metronome', icon: '⏱️', g: 'pass', req: { passing: 72, composure: 64 }, desc: 'Short passing stays crisp under pressure.', elite: 'Keeps the ball moving whatever is around him.' },
-    { id: 'quarterback', name: 'Quarterback', icon: '🏈', g: 'pass', req: { passing: 70, vision: 66 }, desc: 'Accurate long balls and switches of play.', elite: 'Pinpoint 50-metre passes.' },
-    { id: 'whip', name: 'Whip', icon: '🪃', g: 'pass', req: { crossing: 72, curve: 58 }, desc: 'Whipped crosses that are hard to defend.', elite: 'Crosses land on a team-mate\'s head.' },
+    { id: 'quarterback', name: 'Quarterback', icon: '🏈', g: 'pass', pos: ['CB', 'LB', 'RB', 'DM', 'MF', 'AM'], req: { passing: 70, vision: 66 }, desc: 'Accurate long balls and switches of play.', elite: 'Pinpoint 50-metre passes.' },
+    { id: 'whip', name: 'Whip', icon: '🪃', g: 'pass', pos: [...WIDE, 'MF', 'AM'], req: { crossing: 72, curve: 58 }, desc: 'Whipped crosses that are hard to defend.', elite: "Crosses land on a team-mate's head." },
     { id: 'velcro', name: 'Velcro', icon: '🧲', g: 'ball', req: { dribbling: 70, composure: 64 }, desc: 'Kills any pass dead and turns quickly.', elite: 'Never takes a heavy touch.' },
-    { id: 'trickster', name: 'Trickster', icon: '🎩', g: 'ball', req: { dribbling: 76, accel: 64 }, desc: 'Skill moves that beat a tackle.', elite: 'Flicks, nutmegs and roulettes on demand.' },
+    { id: 'virtuoso', name: 'Virtuoso', icon: '🎭', g: 'ball', pos: ['LB', 'RB', 'DM', 'MF', 'LM', 'RM', 'AM', 'LW', 'RW', 'ST'], req: { dribbling: 72, accel: 60 }, desc: 'Takes defenders on with skill moves (step-overs, roulettes, nutmegs) that leave them stunned.', elite: 'A move for every defender, and they rarely read it.' },
+    { id: 'freestyler', name: 'Freestyler', icon: '🌟', g: 'ball', pos: ['MF', 'LM', 'RM', 'AM', 'LW', 'RW', 'ST'], req: { dribbling: 80, composure: 62, curve: 60 }, desc: 'A Virtuoso and more: rainbow flicks, sombreros, and no-look, rabona and trivela passes.', elite: "Street football at the top level. Nobody knows what's coming." },
     { id: 'pressproof', name: 'Press-Proof', icon: '🛡️', g: 'ball', req: { composure: 70, strength: 58, dribbling: 60 }, desc: 'Keeps the ball when the press arrives.', elite: 'Pressure barely touches him.' },
-    { id: 'afterburner', name: 'Afterburner', icon: '🔥', g: 'ball', req: { pace: 80 }, desc: 'Top speed nobody can live with, ball or no ball.', elite: 'Simply faster than everyone.' },
+    { id: 'afterburner', name: 'Afterburner', icon: '🔥', g: 'ball', req: { pace: 80 }, desc: 'Top speed nobody can live with. Loves to knock it past a man and race him.', elite: 'Simply faster than everyone.' },
     { id: 'jetstart', name: 'Jet Start', icon: '⚡', g: 'ball', req: { accel: 80 }, desc: 'Explosive first steps.', elite: 'Gone before the defender reacts.' },
-    { id: 'ballhawk', name: 'Ball Hawk', icon: '🦅', g: 'def', req: { positioning: 68, marking: 66 }, desc: 'Reads passes and steps in to intercept.', elite: 'Picks off passes for fun.' },
-    { id: 'brickwall', name: 'Brick Wall', icon: '🧱', g: 'def', req: { positioning: 66, tackling: 66, strength: 60 }, desc: 'Throws his body in front of shots.', elite: 'Shots rarely get past him.' },
-    { id: 'slider', name: 'Slide Artist', icon: '🛷', g: 'def', req: { tackling: 74 }, desc: 'Clean, long-range sliding tackles.', elite: 'Wins the ball on the floor without the foul.' },
+    { id: 'ballhawk', name: 'Ball Hawk', icon: '🦅', g: 'def', pos: [...BACK, 'MF'], req: { positioning: 68, marking: 66 }, desc: 'Reads passes and steps in to intercept.', elite: 'Picks off passes for fun.' },
+    { id: 'brickwall', name: 'Brick Wall', icon: '🧱', g: 'def', pos: BACK, req: { positioning: 66, tackling: 66, strength: 60 }, desc: 'Defenders only. Throws his body in front of shots.', elite: 'Shots rarely get past him.' },
+    { id: 'slider', name: 'Slide Artist', icon: '🛷', g: 'def', pos: [...BACK, 'MF'], req: { tackling: 74 }, desc: 'Clean, long-range sliding tackles.', elite: 'Wins the ball on the floor without the foul.' },
     { id: 'enforcer', name: 'Enforcer', icon: '🦏', g: 'def', req: { strength: 76, aggression: 56 }, desc: 'Wins every shoulder charge and lands the big hits.', elite: 'Opponents bounce off him.' },
-    { id: 'shadow', name: 'Shadow', icon: '👤', g: 'def', req: { marking: 74, tackling: 64 }, desc: 'Sticks to his man and times standing tackles.', elite: 'Strikers disappear when he marks them.' },
+    { id: 'shadow', name: 'Shadow', icon: '👤', g: 'def', pos: BACK, req: { marking: 74, tackling: 64 }, desc: 'Defenders only. Sticks to his man, reads skill moves and times standing tackles.', elite: 'Strikers disappear when he marks them.' },
     { id: 'engine', name: 'Engine', icon: '🔋', g: 'phys', req: { stamina: 78 }, desc: 'Tires far more slowly.', elite: 'Still sprinting in stoppage time.' },
+    { id: 'overlapper', name: 'Overlapper', icon: '🏃', g: 'phys', pos: ['LB', 'RB', 'LM', 'RM'], req: { stamina: 70, pace: 66, crossing: 58 }, desc: 'Full-backs and wide midfielders. Bursts up the flank on overlapping runs.', elite: "Lives on the opponent's byline." },
+    { id: 'ram', name: 'Battering Ram', icon: '🐏', g: 'phys', pos: ['ST', 'AM'], req: { strength: 72, dribbling: 56 }, desc: 'Forwards only. Holds the ball up with his back to goal and brings others in.', elite: "Centre-backs can't get it off him." },
     { id: 'longthrow', name: 'Long Throw', icon: '🚀', g: 'phys', req: { strength: 68 }, pos: ['LB', 'RB', 'CB', 'DM', 'MF', 'LM', 'RM'], desc: 'Throw-ins that reach the box.', elite: 'Every throw near the box is like a corner.' },
     { id: 'tower', name: 'Tower', icon: '🏰', g: 'phys', req: { heading: 68, strength: 68 }, desc: 'Dominates aerial duels.', elite: 'Wins everything in the air.' },
     { id: 'reflexes', name: 'Cat Reflexes', icon: '🐈', g: 'gk', gk: true, req: { goalkeeping: 70 }, desc: 'Close-range reaction saves.', elite: 'Point-blank shots get clawed away.' },
+    { id: 'octopus', name: 'Octopus', icon: '🐙', g: 'gk', gk: true, req: { goalkeeping: 72, accel: 52 }, desc: 'Full-stretch dives that reach shots into the corners.', elite: 'Nothing is out of his reach.' },
     { id: 'safehands', name: 'Safe Hands', icon: '🧤', g: 'gk', gk: true, req: { goalkeeping: 66, composure: 62 }, desc: 'Claims crosses and holds shots instead of parrying.', elite: 'Nothing slips through his gloves.' },
     { id: 'sweepgk', name: 'Sweeper', icon: '🧹', g: 'gk', gk: true, req: { accel: 56, positioning: 60 }, desc: 'Rushes off his line to sweep up through balls.', elite: 'An extra defender behind the back line.' },
     { id: 'launcher', name: 'Launcher', icon: '🛰️', g: 'gk', gk: true, req: { passing: 56 }, desc: 'Long, accurate distribution.', elite: 'Starts attacks with one kick.' },
   ];
+  // Freestyler is the upgraded Virtuoso: a player carries one or the other
+  const HM_EXCLUDE = { virtuoso: 'freestyler', freestyler: 'virtuoso' };
   const HM = Object.fromEntries(HALLMARKS.map(h => [h.id, h]));
   const HM_ELITE = 11;
 
@@ -237,7 +246,7 @@ const DATA = (() => {
 
   return {
     POS, POS_NAME, POS_GROUP, POS_UV, SQUAD_QUOTA, NUM_PREF,
-    ATTRS, AK, ATTR_SHORT, ATTR_NAME, ATTR_GROUPS, PHYSICAL, OVR_W, HALLMARKS, HM, HM_GROUPS, HM_ELITE,
+    ATTRS, AK, ATTR_SHORT, ATTR_NAME, ATTR_GROUPS, PHYSICAL, OVR_W, HALLMARKS, HM, HM_GROUPS, HM_ELITE, HM_EXCLUDE,
     NATIONS, CONTINENTAL, INVITATIONAL, SHOWCASE, NAMES, NAT_KEY, NAT_FLAG,
     KIT_STYLES, CREST_SHAPES, CREST_ICONS, PALETTE,
     WEATHER, weatherOdds, KICKOFF, CLUB_IDS, COACH_IDS, PERSONALITIES, PRIZE, SEASON, MONTHS,

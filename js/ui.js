@@ -219,6 +219,17 @@ const UI = (() => {
     const tabs = [['home', 'Home', I.home, unread], ['squad', 'Squad', I.squad], ['tactics', 'Tactics', I.tactics], ['market', 'Market', I.market], ['league', 'League', I.league], ['feed', 'Feed', I.feed]];
     return `<nav class="tabbar">${tabs.map(([id, label, ic, n]) => `<button class="tab${S.tab === id ? ' on' : ''}" data-a="tab" data-v="${id}">${ic}${label}${n ? `<span class="dot">${n}</span>` : ''}</button>`).join('')}</nav>`;
   }
+  // inbox counts live in the top bar and the tab bar: keep both in step with the inbox after any action
+  function badges() {
+    if (!G || !G.inbox || S.screen !== 'hub') return;
+    const n = G.inbox.filter(m => !m.done && !m.read).length;
+    document.querySelectorAll('#app [data-a="inbox"].icon-btn, #app .tabbar [data-v="home"]').forEach(b => {
+      let d = b.querySelector('.dot');
+      if (!n) { if (d) d.remove(); return; }
+      if (!d) { d = document.createElement('span'); d.className = 'dot'; b.appendChild(d); }
+      d.textContent = n;
+    });
+  }
   function topbar(title, sub, left = '', right = '') {
     return `<header class="topbar">${left}<div class="title">${title}${sub ? `<div class="sub">${sub}</div>` : ''}</div>${right}</header>`;
   }
@@ -232,7 +243,7 @@ const UI = (() => {
       const el = e.target.closest('[data-a]');
       if (!el) return;
       const fn = A[el.dataset.a];
-      if (fn) { e.preventDefault(); Sfx.play('tap'); fn(el.dataset.v, el, e); }
+      if (fn) { e.preventDefault(); Sfx.play('tap'); fn(el.dataset.v, el, e); badges(); }
     });
     document.addEventListener('input', e => { const el = e.target.closest('[data-in]'); if (el && A[el.dataset.in]) A[el.dataset.in](el.value, el, e); });
     document.addEventListener('change', e => { const el = e.target.closest('[data-ch]'); if (el && A[el.dataset.ch]) A[el.dataset.ch](el.value, el, e); });

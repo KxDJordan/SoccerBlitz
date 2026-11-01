@@ -9,6 +9,8 @@ const Render = (() => {
   const LAYER_PX = 8;
   const PS = 2.15; // players are drawn this much bigger than life so you can read them on a phone
   const HIT_WORDS = ['WHAM!', 'BOOM!', 'CRUNCH!', 'SMASH!', 'POW!', 'THUD!', 'KA-BLAM!', 'WALLOP!'];
+  const BEATEN_WORDS = ['SKINNED!', 'BEATEN!', 'TWISTED!', 'SOLD!', 'GONE!', 'OLÉ!'];
+  const FLAIR_COLS = ['#f0abfc', '#fde047', '#67e8f9', '#ffffff'];
 
   // pitch styles the player can choose in Settings
   const PITCH_STYLES = {
@@ -419,7 +421,7 @@ const Render = (() => {
         ctx.lineWidth = Math.max(1.5, s * 0.07);
         ctx.beginPath(); ctx.ellipse(0, 0, s * 0.72, s * 0.72, 0, 0, 7); ctx.stroke();
       }
-      ctx.rotate(sa + (down ? p.spinAng || 0 : 0));
+      ctx.rotate(sa + (down ? p.spinAng || 0 : 0) + (p.twirl || 0) + (p.stun > 0 ? Math.sin(now / 55) * 0.3 : 0));
       ctx.scale(s, s);
       ctx.lineCap = 'round';
       const skin = lk.skin, sock = k.c3 || k.c1, shorts = k.c3 === k.c1 ? U.mix(k.c1, '#000', 0.35) : k.c3 || '#111827';
@@ -451,6 +453,16 @@ const Render = (() => {
       }
       ctx.restore();
       if (p.slide > 0 && Math.random() < 0.7) this.spawn(p.pos, 'dust');
+      if (p.skill && Math.random() < 0.75) this.spawn(p.pos, p.skill.kind === 'dash' ? 'streak' : 'swish', 0, p.skill.kind === 'dash' ? ['#fde047', '#ffffff'] : [k.c1, '#ffffff', k.c2], 0.6);
+      if (p.stun > 0) {
+        ctx.save(); ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+        const cy = sp.y - lift - s * 0.62;
+        ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = Math.max(1.2, s * 0.06);
+        ctx.beginPath();
+        for (let i = 0; i <= 24; i++) { const an = now / 90 + i * 0.5, r = s * 0.05 + i * s * 0.012; const x = sp.x + Math.cos(an) * r, y = cy + Math.sin(an) * r * 0.45; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+        ctx.stroke();
+        ctx.restore();
+      }
       // dizzy stars over a flattened player
       if (p.down > 0.5 && !p.isGK) {
         ctx.save(); ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -567,7 +579,8 @@ const Render = (() => {
       ctx.restore();
       // the trail remembers where the ball has been in screen space (with height)
       if (b.owner == null && V.len(b.vel) > 6) {
-        this.trail.push({ x: ball.x, y: ball.y, z, curl: b.curl !== 0, power: b.power, t: performance.now() });
+        this.trail.push({ x: ball.x, y: ball.y, z, curl: b.curl !== 0, power: b.power, flair: !!b.flair, t: performance.now() });
+        if (b.flair && Math.random() < 0.6) this.spawn(ball, 'spark', z, FLAIR_COLS, 1.5);
         if (b.power >= 1) { this.spawn(ball, 'flame', z); this.spawn(ball, 'flame', z); }
       }
       if (this.trail.length > 26) this.trail.shift();
@@ -580,7 +593,7 @@ const Render = (() => {
         const a = this.trail[i - 1], c = this.trail[i];
         const pa = this.tx(a), pc = this.tx(c);
         const f = 1 - (now - c.t) / 380;
-        ctx.strokeStyle = c.power >= 1 ? `rgba(255,140,30,${0.75 * f})` : c.curl ? `rgba(94,234,212,${0.7 * f})` : `rgba(255,255,255,${0.42 * f})`;
+        ctx.strokeStyle = c.power >= 1 ? `rgba(255,140,30,${0.75 * f})` : c.flair ? `rgba(240,171,252,${0.8 * f})` : c.curl ? `rgba(94,234,212,${0.7 * f})` : `rgba(255,255,255,${0.42 * f})`;
         ctx.lineWidth = Math.max(1, this.s * 0.25 * f * (c.power >= 1 ? 2 : 1));
         ctx.lineCap = 'round';
         ctx.beginPath(); ctx.moveTo(pa.x, pa.y - a.z * this.s * 0.55); ctx.lineTo(pc.x, pc.y - c.z * this.s * 0.55); ctx.stroke();
@@ -632,6 +645,17 @@ const Render = (() => {
         case 'post': this.burst(at, 20, ['#ffffff', '#e2e8f0', '#fde047'], 8, 'spark'); this.floaters.push({ x: at.x, y: at.y, born: now, text: 'CLANG!', kind: 'impact', size: 1.2 }); this.shake(9, 300); sound('post'); break;
         case 'block': this.burst(at, 10, ['#ffffff'], 5, 'spark'); this.floaters.push({ x: at.x, y: at.y, born: now, text: 'BLOCKED', kind: 'small' }); sound('block'); break;
         case 'special': this.floaters.push({ x: at.x, y: at.y, born: now, text: f.label.toUpperCase(), kind: 'pill', color: col }); sound('special'); break;
+        case 'skill': {
+          // the move's name pops up, with a swirl of dust where he plants his foot (a dash kicks up a spray)
+          this.floaters.push({ x: at.x, y: at.y, born: now, text: f.label.toUpperCase(), kind: 'pill', color: col });
+          this.rings.push({ x: at.x, y: at.y, born: now, life: 420, color: col, max: f.kind === 'dash' ? 3.5 : 2.2 });
+          this.burst(at, f.kind === 'dash' ? 14 : 8, ['#d9f99d', '#a3e635', '#ffffff'], f.kind === 'dash' ? 6 : 3, 'dust');
+          sound('special');
+          break;
+        }
+        case 'stun': this.floaters.push({ x: at.x, y: at.y, born: now, text: U.pick(BEATEN_WORDS), kind: 'small', color: '#38bdf8' }); this.rings.push({ x: at.x, y: at.y, born: now, life: 500, color: '#38bdf8', max: 1.8 }); break;
+        case 'read': this.floaters.push({ x: at.x, y: at.y, born: now, text: f.soft ? 'NOT TODAY' : 'READ IT!', kind: 'small', color: '#fca5a5' }); if (!f.soft) sound('tackle'); break;
+        case 'flair': this.floaters.push({ x: at.x, y: at.y, born: now, text: f.label.toUpperCase(), kind: 'pill', color: '#f0abfc' }); this.burst(at, 14, FLAIR_COLS, 4, 'spark'); sound('special'); break;
         case 'fire': this.burst(at, 40, ['#fb923c', '#f97316', '#fde047', '#ef4444'], 9, 'flame'); this.floaters.push({ x: at.x, y: at.y, born: now, text: "HE'S ON FIRE!", kind: 'impact', size: 1.3, color: '#fb923c' }); sound('fire'); break;
         case 'shot': if (f.power) { this.shake(5, 200); sound('rocket'); } else sound('kick'); break;
         case 'header': sound('header'); break;
@@ -652,7 +676,7 @@ const Render = (() => {
       this.particles.push({
         x: at.x + (flame ? (Math.random() - 0.5) * 0.6 : 0), y: at.y + (flame ? (Math.random() - 0.5) * 0.6 : 0), z: z + (kind === 'confetti' ? 1 + Math.random() * 3 : 0),
         vx: Math.cos(an) * v * (flame ? 0.2 : 1), vy: Math.sin(an) * v * (flame ? 0.2 : 1), vz: kind === 'confetti' ? 2 + Math.random() * 5 : flame ? 1.5 + Math.random() * 2 : kind === 'spark' ? Math.random() * 3 : 0.6,
-        life: 0, max: kind === 'confetti' ? 2.6 : flame ? 0.55 : kind === 'dust' ? 0.6 : 0.45,
+        life: 0, max: kind === 'confetti' ? 2.6 : flame ? 0.55 : kind === 'dust' ? 0.6 : kind === 'swish' || kind === 'streak' ? 0.3 : 0.45,
         color: colors ? U.pick(colors) : flame ? U.pick(['#fb923c', '#f97316', '#fde047', '#ef4444']) : '#d9f99d', kind, spin: Math.random() * 6,
       });
     }
@@ -663,6 +687,7 @@ const Render = (() => {
         p.vx *= Math.exp(-2 * dt); p.vy *= Math.exp(-2 * dt);
         if (p.kind === 'confetti') { p.vz -= 6 * dt; p.z = Math.max(0, p.z + p.vz * dt); p.vx += Math.sin(p.life * 6 + p.spin) * 0.4 * dt * 10; }
         else if (p.kind === 'flame') p.z += p.vz * dt;
+        else if (p.kind === 'swish' || p.kind === 'streak') { p.vx *= 0.9; p.vy *= 0.9; }
         else { p.vz -= 9 * dt; p.z = Math.max(0, p.z + p.vz * dt); }
       }
       this.particles = this.particles.filter(p => p.life < p.max);
@@ -673,7 +698,8 @@ const Render = (() => {
         const sp = this.tx(p), f = 1 - p.life / p.max, y = sp.y - p.z * this.s * 0.55;
         ctx.globalAlpha = Math.max(0, f);
         ctx.fillStyle = p.color;
-        const r = Math.max(1, this.s * (p.kind === 'confetti' ? 0.22 : p.kind === 'flame' ? 0.28 * f + 0.05 : 0.12));
+        const r = Math.max(1, this.s * (p.kind === 'confetti' ? 0.22 : p.kind === 'flame' ? 0.28 * f + 0.05 : p.kind === 'swish' ? 0.3 * f + 0.06 : p.kind === 'streak' ? 0.18 : 0.12));
+        if (p.kind === 'swish' || p.kind === 'streak') ctx.globalAlpha = Math.max(0, f) * 0.55;
         if (p.kind === 'confetti') { ctx.save(); ctx.translate(sp.x, y); ctx.rotate(p.life * 8 + p.spin); ctx.fillRect(-r, -r * 0.5, r * 2, r); ctx.restore(); }
         else { ctx.beginPath(); ctx.arc(sp.x, y, r, 0, 7); ctx.fill(); }
       }

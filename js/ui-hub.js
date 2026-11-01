@@ -118,29 +118,30 @@
   A.advance = () => {
     const pend = L.pending();
     if (pend) return handlePending(pend);
-    const before = G.day;
+    const before = G.day, msg0 = G.nextMsg;
     L.advanceDay();
     Sfx.play('advance');
-    dayToast(before);
+    dayToast(before, msg0);
     UI.render();
   };
   A.skip = () => {
-    const before = G.day;
+    const before = G.day, msg0 = G.nextMsg;
     let n = 0;
     while (n++ < 30) {
       if (L.pending()) break;
       if (G.phase !== 'season') break;
-      const blocking = G.inbox.some(m => !m.done && m.day === G.day && (m.type === 'event' || m.type === 'job' || m.type === 'showcase') && m.actions && m.actions.length);
+      const blocking = G.inbox.some(m => !m.done && m.day === G.day && m.s === G.season && (m.type === 'event' || m.type === 'job' || m.type === 'showcase') && m.actions && m.actions.length);
       if (blocking && G.day !== before) break;
       L.advanceDay();
       if (G.sacked) break;
     }
     Sfx.play('advance');
-    dayToast(before);
+    dayToast(before, msg0);
     UI.render();
   };
-  function dayToast(before) {
-    const fresh = G.inbox.filter(m => !m.done && m.day > before && m.actions && m.actions.length);
+  // only messages created by this advance (ids only grow; day numbers restart every season)
+  function dayToast(before, msg0) {
+    const fresh = G.inbox.filter(m => m.id >= msg0 && !m.done && !m.read && m.actions && m.actions.length);
     if (fresh.length) UI.toast(`✉️ ${fresh.length} new item${fresh.length > 1 ? 's' : ''} need your attention`);
     if (G.phase === 'post' && before < DATA.SEASON.END) UI.toast('🏁 The season is over! Open the season review.');
   }
@@ -170,12 +171,26 @@
     if (out && out.nav === 'tab') { A.tab(out.v); return; }
     if (out && out.text) UI.toast(esc(out.text));
     if (out && out.nav === 'home') { UI.closeSheet(); UI.go('hub', { tab: 'home' }); return; }
-    if (S.sheetOpen === 'inbox') A.inbox(); else UI.render();
+    // the screen behind the sheet (home inbox card, badges) has to catch up too
+    UI.render();
+    if (S.sheetOpen === 'inbox') A.inbox();
   };
   A.inbox = () => {
     for (const m of G.inbox) if (!m.actions || !m.actions.length || m.done) m.read = true;
-    UI.sheet(`<h2>Inbox</h2>${G.inbox.length ? G.inbox.slice(0, 40).map(msgHTML).join('') : '<div class="empty">Nothing yet.</div>'}`, { id: 'inbox', refresh: () => A.inbox() });
-    UI.render && setTimeout(() => { if (S.screen === 'hub') { const tb = document.querySelector('.tabbar'); if (tb) tb.outerHTML = UI.tabbar(); } }, 50);
+    const open = G.inbox.filter(m => !m.done && m.actions && m.actions.some(a => a.act !== 'player' && a.act !== 'tab')).length;
+    UI.sheet(`<div class="flex between"><h2>Inbox</h2>${G.inbox.length ? `<button class="btn xs" data-a="inboxClear">🧹 Clear all</button>` : ''}</div>${open ? `<div class="tiny muted mb8">Clear all keeps the ${open} decision${open > 1 ? 's' : ''} still waiting on you (bids, trades, offers).</div>` : ''}${G.inbox.length ? G.inbox.slice(0, 40).map(msgHTML).join('') : '<div class="empty">Nothing yet.</div>'}`, { id: 'inbox', refresh: () => A.inbox() });
+    if (S.screen === 'hub') UI.render();
+  };
+
+  // clear everything that's dealt with or just for information; decisions still waiting on an answer stay (but stop counting as new)
+  A.inboxClear = () => {
+    const keep = m => !m.done && m.actions && m.actions.some(a => a.act !== 'player' && a.act !== 'tab');
+    G.inbox = G.inbox.filter(keep);
+    for (const m of G.inbox) m.read = true;
+    L.save();
+    UI.toast('🧹 Inbox cleared');
+    UI.render();
+    A.inbox();
   };
 
   // ════════ SQUAD ════════
@@ -242,21 +257,25 @@
       const wk = nat ? 0 : L.retrainWeeks(p, x);
       return `<button class="chip${on ? ' on' : ''}" data-a="devPos" data-v="${p.id}:${x}">${nat ? '★ ' : alt ? '✓ ' : ''}${x}${nat ? '' : ` <span class="tiny" style="opacity:.7">${wk}w</span>`}</button>`;
     };
-    const roles = TAC.rolesFor(target);
-    const focus = TAC.ROLES[p.focus] && TAC.ROLES[p.focus].slots.includes(target) ? TAC.ROLES[p.focus] : null;
+    L.autoFocus(p);
+    const focus = L.focusRole(p);
+    // a role from the tactics in one of his other positions sits at the top of the list
+    const roles = focus && !focus.slots.includes(target) ? [focus, ...TAC.rolesFor(target)] : TAC.rolesFor(target);
+    const auto = !p.acad && !p.focusSet;
     const retraining = target !== p.pos;
     return `${outlookCard(p)}
       <div class="kicker mb8">1 · Position</div><p class="tiny muted" style="margin-top:-2px">★ natural · ✓ secondary. Pick a new one and he retrains week by week (younger players learn faster), then switches to it for good. His growth follows the position he's training for.</p>
       <div class="chips" style="flex-wrap:wrap">${positions.map(posChip).join('')}</div>
       ${retraining ? `<div class="card tight"><div class="flex between small"><span>🔄 Retraining <b>${p.pos} → ${target}</b> (${esc(DATA.POS_NAME[target])})</span><span class="muted">${Math.round(g.progress * 100)}% · ~${Math.max(1, Math.ceil(g.weeks * (1 - g.progress)))} wks left</span></div><div class="prog mt8"><i style="width:${g.progress * 100}%"></i></div><div class="tiny dim mt4">Would rate ${L.calcOvr(p, target)} there today · ${Math.round(TAC.fam(p, target) * 100)}% comfortable · growth slowed 15% while learning</div></div>` : ''}
-      <div class="kicker mt12 mb8">2 · Role</div><p class="tiny muted" style="margin-top:-2px">60% of his growth goes into the role's three key attributes; the rest follows the ${target} position.</p>
+      <div class="kicker mt12 mb8">2 · Role</div><p class="tiny muted" style="margin-top:-2px">60% of his growth goes into the role's three key attributes; the rest follows the ${target} position.${p.acad ? '' : auto ? ' <b>Following your tactics:</b> he trains for the role he plays in your XI (or his position\'s first role when he isn\'t playing one of his positions). Pick a role to set it yourself.' : ''}</p>
+      ${!p.acad && !auto ? `<button class="btn xs mb8" data-a="devRole" data-v="${p.id}:auto">↺ Follow tactics instead</button>` : ''}
       ${roles.map(r => { const rr = L.roleRating(p, r.id, target); return `<button class="rolefit${focus && focus.id === r.id ? ' on' : ''}" style="width:100%;text-align:left" data-a="devRole" data-v="${p.id}:${r.id}"><div><div class="bold small">${esc(r.name)} <span class="tag">${r.short}</span></div><div class="tiny muted">${r.keys.map(k => DATA.ATTR_NAME[k]).join(' · ')}</div></div><span class="ovr ${U.ovrClass(rr)}">${rr}</span></button>`; }).join('')}
-      ${hmTrainPanel(p)}
       <div class="kicker mt12 mb8">Projected over a season</div>${attrsHTML(p, focus ? focus.keys : [], g.proj)}`;
   }
   function planLine(p) {
-    const g = L.growthInfo(p), r = TAC.ROLES[p.focus];
-    return `<button class="card tight mt8" data-a="focusSheet" data-v="${p.id}" style="width:100%;text-align:left;display:block"><div class="flex between"><div class="small">🎯 <b>${g.pos !== p.pos ? `Retraining → ${g.pos}` : p.pos}</b> · ${r ? esc(r.name) : 'no role set'}</div><span class="tag ${g.net >= 1.5 ? 't-good' : g.net > 0.3 ? 't-warn' : 't-bad'}">${g.label} ${g.net >= 0 ? '+' : ''}${g.net.toFixed(1)}/season</span></div></button>`;
+    L.autoFocus(p);
+    const g = L.growthInfo(p), r = L.focusRole(p);
+    return `<button class="card tight mt8" data-a="focusSheet" data-v="${p.id}" style="width:100%;text-align:left;display:block"><div class="flex between"><div class="small">🎯 <b>${g.pos !== p.pos ? `Retraining → ${g.pos}` : p.pos}</b> · ${r ? esc(r.name) : 'no role set'}${!p.acad && !p.focusSet ? ' <span class="tiny dim">(tactics)</span>' : ''}</div><span class="tag ${g.net >= 1.5 ? 't-good' : g.net > 0.3 ? 't-warn' : 't-bad'}">${g.label} ${g.net >= 0 ? '+' : ''}${g.net.toFixed(1)}/season</span></div></button>`;
   }
   A.devPos = v => { const [pid, pos] = v.split(':'); L.setPlan(+pid, pos); UI.refreshSheet(); UI.render(); };
   A.devRole = v => { const [pid, r] = v.split(':'); L.setPlan(+pid, null, r); UI.refreshSheet(); UI.render(); };
@@ -310,29 +329,20 @@
     const groups = DATA.ATTR_GROUPS.filter(g => g.id !== 'gk' || p.pos === 'GK');
     return `<div class="card tight">${groups.map(g => `<div class="kicker mt4 mb8">${g.label}</div>${g.keys.map(key => { let v = p.a[DATA.AK[key]]; if (fuzz) v = Math.round(v / 5) * 5; const gain = proj ? proj[DATA.AK[key]] : 0; return `<div class="attr${keys.includes(key) ? ' key' : ''}"${proj ? ' style="grid-template-columns:92px 1fr 62px"' : ''}><span>${DATA.ATTR_NAME[key]}</span><div class="bar" style="position:relative"><i class="${U.ovrClass(v)}" style="width:${v}%"></i>${gain > 0 ? `<i style="position:absolute;top:0;left:${v}%;width:${gain}%;background:var(--good);opacity:.55"></i>` : ''}</div><b>${fuzz ? '~' : ''}${v}${proj ? ` <span class="tiny ${gain > 0 ? 'good' : 'dim'}" style="font-family:var(--f-body)">${gain > 0 ? `+${gain}` : '·'}</span>` : ''}</b></div>`; }).join('')}`).join('')}</div>`;
   }
-  // ── hallmarks: what he's known for, and what he's working on ──
+  // ── hallmarks: what he's known for (innate: he's born with them) ──
   function hmChip(id, lvl) {
     const h = DATA.HM[id];
     return h ? `<button class="hmchip${lvl === 2 ? ' elite' : ''}" data-a="hmInfo" data-v="${id}:${lvl}"><span>${h.icon}</span>${esc(h.name)}${lvl === 2 ? ' ★' : ''}</button>` : '';
   }
   function hallmarksHTML(p) {
     const mine = p.tid === G.userTeamId, k = L.knowledge(p), ids = Object.keys(p.hm || {});
-    const head = `<div class="kicker mt12 mb8">Hallmarks <span class="dim">· ${ids.length}/${Math.max(ids.length, L.hmSlots(p))}</span></div>`;
+    const head = `<div class="kicker mt12 mb8">Hallmarks <span class="dim">· innate</span></div>`;
     if (!mine && k < 2) return `${head}<div class="card tight small muted">${ids.length ? `${ids.length} hallmark${ids.length > 1 ? 's' : ''}: scout him to find out which.` : 'None that the scouts have heard of.'}</div>`;
     const order = DATA.HM_GROUPS.map(g => g[0]);
     ids.sort((a, b) => p.hm[b] - p.hm[a] || order.indexOf(DATA.HM[a].g) - order.indexOf(DATA.HM[b].g));
-    const tr = p.hmTrain && DATA.HM[p.hmTrain.id];
-    return `${head}<div class="hmwrap">${ids.length ? ids.map(id => hmChip(id, p.hm[id])).join('') : '<span class="small muted">No hallmarks yet.</span>'}</div>
-      ${tr && mine ? `<div class="tiny muted mt8">🏋️ Training: <b>${tr.icon} ${esc(tr.name)}${p.hm[tr.id] ? ' ★' : ''}</b> · ${Math.round(p.hmTrain.prog * 100)}%</div>` : ''}`;
+    return `${head}<div class="hmwrap">${ids.length ? ids.map(id => hmChip(id, p.hm[id])).join('') : '<span class="small muted">No hallmarks: a no-frills player.</span>'}</div>`;
   }
   A.hmInfo = v => { const [id, lvl] = v.split(':'), h = DATA.HM[id]; if (h) UI.toast(`${h.icon} <b>${esc(h.name)}${lvl === '2' ? ' ★ Elite' : ''}</b>: ${esc(lvl === '2' ? h.elite : h.desc)}`); };
-  function hmTrainPanel(p) {
-    const cands = L.hmCandidates(p), tr = p.hmTrain;
-    const reqTxt = (h, lvl) => Object.keys(h.req).map(k => { const need = h.req[k] + (lvl ? DATA.HM_ELITE : 0), have = p.a[DATA.AK[k]]; return `<span class="${have >= need ? 'good' : 'warn'}">${DATA.ATTR_SHORT[k]} ${have}/${need}</span>`; }).join(' · ');
-    return `<div class="kicker mt12 mb8">3 · Hallmark training</div><p class="tiny muted" style="margin-top:-2px">Pick one hallmark to work on. Progress builds week by week (training intensity speeds it up), and part of his growth goes into the attributes it needs. It lands once both are complete.${L.hmSlots(p) <= Object.keys(p.hm || {}).length ? ' His hallmark slots are full, so he can only master the ones he has.' : ''}</p>
-      ${cands.length ? cands.map(({ h, lvl, weeks }) => { const on = tr && tr.id === h.id; return `<button class="rolefit${on ? ' on' : ''}" style="width:100%;text-align:left" data-a="hmTrain" data-v="${p.id}:${h.id}"><div><div class="bold small">${h.icon} ${lvl ? 'Master ' : ''}${esc(h.name)}${lvl ? ' ★' : ''}</div><div class="tiny muted">${esc(lvl ? h.elite : h.desc)}</div><div class="tiny mt4">${reqTxt(h, lvl)}</div>${on ? `<div class="prog mt4"><i style="width:${Math.round(tr.prog * 100)}%"></i></div>` : ''}</div><span class="tiny muted">${on ? `${Math.round(tr.prog * 100)}%` : `~${weeks}w`}</span></button>`; }).join('') : '<div class="card tight small muted">Nothing within reach yet: his attributes need to grow first.</div>'}`;
-  }
-  A.hmTrain = v => { const [pid, id] = v.split(':'); L.setHmTrain(+pid, id); UI.refreshSheet(); };
   function rolesHTML(p) {
     const roles = TAC.rolesFor(p.pos).map(r => ({ r, v: L.roleRating(p, r.id) })).sort((a, b) => b.v - a.v).slice(0, 4);
     const max = roles[0] ? roles[0].v : 1;

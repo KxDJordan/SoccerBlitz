@@ -255,6 +255,13 @@ const Career = (() => {
   function daily() {
     // expire stale bids
     for (const m of G.inbox) if (expired(m)) { m.done = true; m.result = 'Expired'; }
+    // contract reminders settle themselves once he's re-signed or gone
+    for (const m of G.inbox) {
+      if (m.done || m.type !== 'contract') continue;
+      const p = G.players[m.pid];
+      if (!p || p.tid !== G.userTeamId) { m.done = true; m.result = 'No longer at the club.'; }
+      else if (p.yrs > 1) { m.done = true; m.result = 'Contract renewed.'; }
+    }
     // Christmas check for the Great Escape
     if (G.day === 100) { const tb = L.table(u().leagueId); if (tb.length && tb[tb.length - 1].tid === G.userTeamId && u().tier === 0) G.bottomAtXmas = true; }
     if (G.lastEventDay && G.day - G.lastEventDay < 5) return;

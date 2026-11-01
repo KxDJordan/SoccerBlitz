@@ -94,84 +94,32 @@ const L = (() => {
   const blankSt = () => ({ gp: 0, g: 0, a: 0, rat: 0, motm: 0, cs: 0, yc: 0, rc: 0, min: 0, hits: 0 });
 
   // ── hallmarks ──
-  // how many a player can carry: the better he is, the more tricks he has
-  const hmSlots = p => (p.ovr >= 84 ? 5 : p.ovr >= 78 ? 4 : p.ovr >= 70 ? 3 : p.ovr >= 62 ? 2 : p.ovr >= 52 ? 1 : 0);
-  const hmCount = p => Object.keys(p.hm || {}).length;
-  // how far above the requirement his weakest key attribute sits (negative = short of it)
-  function hmMargin(p, h) {
-    if (!h || !!h.gk !== (p.pos === 'GK') || (h.pos && !h.pos.includes(p.pos))) return -99;
+  // innate: rolled once from the player he'll become and his position, then his for life
+  const HM_V = 2;
+  const hmFits = (p, h) => !!h && !!h.gk === (p.pos === 'GK') && (!h.pos || h.pos.includes(p.pos));
+  // how far above the requirement his weakest key attribute sits (negative = short of it); lift projects him forward
+  function hmMargin(p, h, lift = 0) {
+    if (!hmFits(p, h)) return -99;
     let m = 99;
-    for (const k in h.req) m = Math.min(m, p.a[AK[k]] - h.req[k]);
+    for (const k in h.req) m = Math.min(m, p.a[AK[k]] + lift - h.req[k]);
     return m;
   }
-  // the ones he's born with: what his attributes clearly support, best first, some left to learn
+  // the gifted carry more of them; what they are follows his game at its peak, so a 16-year-old already has his
   function rollHallmarks(p) {
     p.hm = {};
-    const n = hmSlots(p);
+    const peak = Math.max(p.ovr, p.pot || 0), lift = (peak - p.ovr) * 0.9;
+    let n = peak >= 88 ? 4 : peak >= 82 ? 3 : peak >= 75 ? 2 : peak >= 66 ? 1 : rng() < 0.35 ? 1 : 0;
+    if (rng() < 0.3) n++; else if (n && rng() < 0.2) n--;
+    let pool = DATA.HALLMARKS.map(h => ({ h, m: hmMargin(p, h, lift) })).filter(x => x.m >= -4);
     let elites = 0;
-    for (const { h, m } of DATA.HALLMARKS.map(h => ({ h, m: hmMargin(p, h) })).filter(x => x.m >= 0).sort((a, b) => b.m - a.m)) {
-      if (hmCount(p) >= n) break;
-      if (rng() < 0.3) continue;
-      const elite = m >= DATA.HM_ELITE && p.ovr >= 76 && elites < 2 && rng() < 0.55;
+    while (n-- > 0 && pool.length) {
+      const pick = U.wpick(pool, x => x.m + 6);
+      const elite = pick.m >= DATA.HM_ELITE && peak >= 80 && elites < 2 && rng() < 0.5;
       if (elite) elites++;
-      p.hm[h.id] = elite ? 2 : 1;
+      p.hm[pick.h.id] = elite ? 2 : 1;
+      const ex = DATA.HM_EXCLUDE[pick.h.id];
+      pool = pool.filter(x => x !== pick && x.h.id !== ex);
     }
-  }
-  // what a hallmark asks of him: the learn target, or the mastery target for the Elite version
-  const hmTarget = (p, id) => ((p.hm || {})[id] ? DATA.HM_ELITE : 0);
-  // what he could work on in training: hallmarks within reach, or ones he has and could master
-  function hmCandidates(p) {
-    const out = [];
-    for (const h of DATA.HALLMARKS) {
-      const m = hmMargin(p, h), lvl = (p.hm || {})[h.id] || 0;
-      if (m === -99 || lvl === 2) continue;
-      if (lvl === 1 ? m >= DATA.HM_ELITE - 8 : m >= -8 && hmCount(p) < Math.max(1, hmSlots(p))) out.push({ h, m, lvl, need: hmTarget(p, h.id) - m, weeks: hmWeeks(p, h.id) });
-    }
-    return out.sort((a, b) => a.need - b.need);
-  }
-  function hmWeeks(p, id) {
-    const base = p.age <= 21 ? 6 : p.age <= 25 ? 8 : p.age <= 29 ? 11 : 15;
-    return Math.round(base * ((p.hm || {})[id] ? 1.6 : 1));
-  }
-  function setHmTrain(pid, id) {
-    const p = P(pid);
-    if (!p) return;
-    if (!id || (p.hmTrain && p.hmTrain.id === id)) p.hmTrain = null;
-    else if (hmCandidates(p).some(c => c.h.id === id)) p.hmTrain = { id, prog: 0 };
-    save();
-  }
-  function hmNote(p, title, body) {
-    if (p.tid === G.userTeamId && typeof Career !== 'undefined') Career.inbox({ type: 'scout', pid: p.id, title, body, actions: [{ label: 'View player', act: 'player', v: p.id }] });
-  }
-  // a week on the training ground: progress fills, and the hallmark lands once his attributes are there too
-  function hmTrainWeek(p) {
-    const tr = p.hmTrain;
-    if (!tr) return;
-    const h = DATA.HM[tr.id];
-    if (!h) { p.hmTrain = null; return; }
-    const intensity = { light: 0.75, normal: 1, hard: 1.3 }[G.train] || 1;
-    tr.prog = Math.min(1, tr.prog + intensity / hmWeeks(p, tr.id));
-    if (tr.prog < 1 || hmMargin(p, h) < hmTarget(p, tr.id)) return;
-    const elite = !!(p.hm || {})[tr.id];
-    p.hm = p.hm || {};
-    p.hm[tr.id] = elite ? 2 : 1;
-    p.hmTrain = null;
-    hmNote(p, `${h.icon} ${p.ln} ${elite ? 'masters' : 'learns'} ${h.name}${elite ? ' ★' : ''}`, `${p.fn} ${p.ln} has ${elite ? 'mastered the Elite version of' : 'added'} ${h.name} to his game: ${elite ? h.elite : h.desc}`);
-  }
-  // each summer: the young pick things up naturally, and the old lose what their legs no longer support
-  function hmSeason(p) {
-    if (!p.hm) rollHallmarks(p);
-    for (const id in p.hm) {
-      const h = DATA.HM[id], m = hmMargin(p, h);
-      if (!h || m < -6) { delete p.hm[id]; if (h) hmNote(p, `${h.icon} ${p.ln} loses ${h.name}`, `Age has caught up with ${p.fn} ${p.ln}: he no longer has the attributes for ${h.name}.`); }
-      else if (p.hm[id] === 2 && m < DATA.HM_ELITE - 6) p.hm[id] = 1;
-    }
-    if (rng() > (p.age <= 23 ? 0.45 : 0.25)) return;
-    const up = Object.keys(p.hm).find(id => p.hm[id] === 1 && p.ovr >= 76 && hmMargin(p, DATA.HM[id]) >= DATA.HM_ELITE);
-    if (up && rng() < 0.4) { p.hm[up] = 2; hmNote(p, `${DATA.HM[up].icon} ${p.ln} masters ${DATA.HM[up].name} ★`, `Over the season ${p.fn} ${p.ln} has made ${DATA.HM[up].name} his trademark: ${DATA.HM[up].elite}`); return; }
-    if (hmCount(p) >= hmSlots(p)) return;
-    const c = DATA.HALLMARKS.filter(h => !p.hm[h.id] && hmMargin(p, h) >= 0).sort((a, b) => hmMargin(p, b) - hmMargin(p, a))[0];
-    if (c) { p.hm[c.id] = 1; hmNote(p, `${c.icon} ${p.ln} picks up ${c.name}`, `${p.fn} ${p.ln} has developed a new hallmark: ${c.desc}`); }
   }
   // what his hallmarks are worth in a quick sim (a few tenths of an overall point each)
   const hmBonus = p => { let s = 0; for (const id in p.hm || {}) s += p.hm[id] === 2 ? 0.8 : 0.35; return s; };
@@ -380,7 +328,8 @@ const L = (() => {
     if (tac.lineup.some(x => x == null)) autoLineup(t, true);
     const inXI = new Set(tac.lineup);
     tac.bench = (tac.bench || []).filter(id => { const p = P(id); return p && p.tid === t.id && available(p) && !inXI.has(id); });
-    if (tac.bench.length < 5) {
+    // empty bench seats are filled from the squad (new signings and promoted kids included)
+    if (tac.bench.length < 9) {
       const extra = squad(t).filter(p => available(p) && !inXI.has(p.id) && !tac.bench.includes(p.id)).sort((a, b) => b.ovr - a.ovr);
       for (const p of extra) { if (tac.bench.length >= 9) break; tac.bench.push(p.id); }
     }
@@ -391,7 +340,7 @@ const L = (() => {
   function newCareer(cfg) { genWorld(); startCareer(cfg); }
   function genWorld() {
     G = {
-      v: 1, created: Date.now(), season: 1, year: 2026, day: 1, phase: 'season', ready: false,
+      v: 1, hmV: HM_V, created: Date.now(), season: 1, year: 2026, day: 1, phase: 'season', ready: false,
       teams: [], players: {}, coaches: {}, leagues: [], fixtures: [], fa: [], nextPid: 1, nextCid: 1, nextFx: 1, nextMsg: 1,
       table: {}, acadTable: {}, cups: {}, cont: null, inv: null, news: [], forum: [], inbox: [], history: [], records: {},
       staff: { ast: null, fit: null, yth: null, sct: [] }, staffPool: [], coachPool: [],
@@ -965,12 +914,34 @@ const L = (() => {
     const label = net >= 6 ? 'Explosive' : net >= 3.5 ? 'Rapid' : net >= 1.5 ? 'Steady' : net > 0.3 ? 'Slow' : net > -0.5 ? 'Plateau' : 'Declining';
     // where a season of growth points would land: 60% on the role's keys, the rest by the target position
     const pts = weekly * 6.5 * WEEKS, pos = p.trainPos || p.pos, w = DATA.OVR_W[pos];
-    const role = p.focus && TAC.ROLES[p.focus] && TAC.ROLES[p.focus].slots.includes(pos) ? TAC.ROLES[p.focus] : null;
+    const role = focusRole(p);
     const keys = role ? role.keys.map(k => AK[k]) : [];
     const proj = p.a.map((v, i) => Math.min(99 - v, Math.round(pts * ((keys.includes(i) ? 0.6 / keys.length : 0) + (keys.length ? 0.4 : 1) * w[i]))));
     return { ageF, potF, mult, weekly, season, decline, net, phase, label, proj, pos, weeks: retrainWeeks(p, p.trainPos), progress: p.retrain || 0 };
   }
-  // the player's development plan: a position to grow into, and a role within it
+  // the role he trains for counts if it fits any position he plays (or is retraining into)
+  function focusRole(p) {
+    const r = p.focus && TAC.ROLES[p.focus];
+    if (!r) return null;
+    const played = [p.trainPos || p.pos, p.pos, ...(p.alt || [])];
+    return r.slots.some(x => played.includes(x)) ? r : null;
+  }
+  // a first-team player without a hand-picked role trains for the one the tactics give him, if that slot is one of
+  // his positions; otherwise for the first role of his main position
+  function autoFocus(p) {
+    const t = p.tid >= 0 ? team(p.tid) : null;
+    if (!t || p.acad || p.focusSet) return;
+    const pos = p.trainPos || p.pos, played = [pos, p.pos, ...(p.alt || [])];
+    let role = null;
+    const i = t.tac && t.tac.lineup ? t.tac.lineup.indexOf(p.id) : -1;
+    if (i >= 0) {
+      const sl = TAC.formation(t.tac.oop).slots[i], r = t.tac.rOOP[i] || t.tac.rIP[i];
+      if (sl && played.includes(sl.pos) && TAC.ROLES[r]) role = r;
+    }
+    if (!role) { const rs = TAC.rolesFor(pos); role = rs.length ? rs[0].id : TAC.defaultRole(pos); }
+    p.focus = role;
+  }
+  // the player's development plan: a position to grow into, and a role within it ('auto' hands the role back to the tactics)
   function setPlan(pid, pos, roleId) {
     const p = P(pid);
     if (!p) return;
@@ -981,7 +952,9 @@ const L = (() => {
       const target = p.trainPos || p.pos;
       if (!p.focus || !TAC.ROLES[p.focus] || !TAC.ROLES[p.focus].slots.includes(target)) p.focus = TAC.defaultRole(target);
     }
-    if (roleId && TAC.ROLES[roleId]) p.focus = roleId;
+    if (roleId === 'auto') { p.focusSet = false; autoFocus(p); }
+    else if (roleId && TAC.ROLES[roleId]) { p.focus = roleId; if (!p.acad) p.focusSet = true; }
+    else if (pos) autoFocus(p);
     save();
   }
   function retrainWeek(p) {
@@ -999,17 +972,13 @@ const L = (() => {
   function spend(p, pts) {
     p.gp = (p.gp || 0) + pts;
     const pos = p.trainPos || p.pos, w = DATA.OVR_W[pos];
-    const role = p.focus && TAC.ROLES[p.focus] && TAC.ROLES[p.focus].slots.includes(pos) ? TAC.ROLES[p.focus] : null;
+    const role = focusRole(p);
     const keys = role ? role.keys.map(k => AK[k]) : [];
-    // hallmark training: a share of the work goes into whatever attributes are still short of its requirement
-    const hmh = p.hmTrain && DATA.HM[p.hmTrain.id], hmT = hmh ? hmTarget(p, hmh.id) : 0;
     let guard = 0;
     while (p.gp >= 1 && guard++ < 40) {
       p.gp -= 1;
       let i;
-      const short = hmh ? Object.keys(hmh.req).filter(k => p.a[AK[k]] < hmh.req[k] + hmT).map(k => AK[k]) : [];
-      if (short.length && rng() < 0.35) i = U.pick(short);
-      else if (keys.length && rng() < 0.6) i = U.pick(keys);
+      if (keys.length && rng() < 0.6) i = U.pick(keys);
       else i = U.wpick(w.map((x, k) => k), k => w[k] + 0.01);
       if (p.a[i] < 99) p.a[i]++;
     }
@@ -1023,9 +992,9 @@ const L = (() => {
     retarget(p);
   }
   function weeklyDev(p, t) {
+    autoFocus(p);
     if (p.inj > 0) return;
     retrainWeek(p);
-    hmTrainWeek(p);
     const gain = growthRate(p) * potFactor(p) * devMult(p, t);
     if (gain > 0) spend(p, gain * 6.5);
     if (p.age >= 30 && rng() < (p.age - 29) * 0.06 * (p.pers === 'pro' ? 0.6 : 1) * (t && t.ident === 'oldguard' ? 0.6 : 1)) decline(p, 1);
@@ -1035,7 +1004,7 @@ const L = (() => {
     // potential re-rolls a touch for the young
     if (p.age <= 22) p.pot = Math.round(U.clamp(p.pot + U.gauss(0, 2), p.ovr, 97));
     retarget(p);
-    hmSeason(p);
+    if (!p.hm) rollHallmarks(p);
   }
 
   // ── strength for quick sims ──
@@ -1728,8 +1697,8 @@ const L = (() => {
       G.ready = true;
       // older saves had separate in/out-of-possession shapes: fold them into one shape with roles
       for (const t of G.teams) if (t.tac) TAC.normalize(t.tac);
-      // saves from before hallmarks: give every player the ones his attributes support
-      for (const p of Object.values(G.players)) if (!p.hm) rollHallmarks(p);
+      // saves from before innate hallmarks (or before hallmarks at all): everyone rolls his set once
+      if (G.hmV !== HM_V) { for (const p of Object.values(G.players)) { rollHallmarks(p); delete p.hmTrain; } G.hmV = HM_V; }
       return true;
     } catch (e) { return false; }
   }
@@ -1741,7 +1710,7 @@ const L = (() => {
 
   return {
     team, user, P, squad, league, isUser, calcOvr, roleRating, mkPlayer, mkCoach, marketWage, value, payroll, staffWages, logMoney, teamLevel,
-    applyPhilosophy, applyRoles, growthInfo, setPlan, hmSlots, hmMargin, hmCandidates, hmWeeks, setHmTrain, rollHallmarks, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
+    applyPhilosophy, applyRoles, growthInfo, setPlan, autoFocus, focusRole, hmMargin, hmFits, rollHallmarks, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
     dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, resultFor, seasonRecord, lastUserFixture, attendance,
     table, acadTableRows, position, finalStanding, tableLg, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
     MIN_SQUAD, canLose, squadFloorWhy, askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,

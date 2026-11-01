@@ -119,12 +119,20 @@
       ${board()}
       ${sel != null ? slotPanel(sel, live) : ''}
       ${shapeReport()}
-      <div class="card"><h3>${live ? `Bench · ${live.subsLeft} subs left` : 'Bench'}</h3><div class="bench">${bench.map(p => `<button class="bp${S.tac.bench === p.id ? ' sel' : ''}" data-a="benchTap" data-v="${p.id}">${UI.face(p, 34)}<span>${esc(p.ln)}</span><span class="tiny">${UI.posB(p.pos)} ${p.ovr}</span></button>`).join('') || '<div class="tiny muted">Nobody on the bench.</div>'}</div></div>
+      <div class="card"><h3>${live ? `Bench · ${live.subsLeft} subs left` : `Bench · ${bench.length}/9`}</h3><div class="bench">${bench.map(p => `<button class="bp${S.tac.bench === p.id ? ' sel' : ''}" data-a="benchTap" data-v="${p.id}">${UI.face(p, 34)}<span>${esc(p.ln)}</span><span class="tiny">${UI.posB(p.pos)} ${p.ovr}</span></button>`).join('') || '<div class="tiny muted">Nobody on the bench.</div>'}</div></div>
+      ${live ? '' : reservesCard(t)}
       <div class="card"><h3>Team instructions</h3>${TAC.TEAM_OPTIONS.map(o => `<div class="instr"><span class="lab">${o.label}</span><div class="opts">${o.options.map(x => `<button class="${t.team[o.key] === x.value ? 'on' : ''}" data-a="tacTeam" data-v="${o.key}:${x.value}">${x.label}</button>`).join('')}</div></div>`).join('')}</div>
       <div class="card"><h3>Set pieces</h3><div class="instr"><span class="lab">Penalties</span><select class="txt" style="height:38px" data-ch="tacPk"><option value="">Auto (best finisher)</option>${outfield.map(p => `<option value="${p.id}"${t.pk === p.id ? ' selected' : ''}>${esc(p.ln)} (FIN ${p.a[DATA.AK.finishing]})</option>`).join('')}</select></div><div class="instr"><span class="lab">Free kicks</span><select class="txt" style="height:38px" data-ch="tacFk"><option value="">Auto (best curler)</option>${outfield.map(p => `<option value="${p.id}"${t.fk === p.id ? ' selected' : ''}>${esc(p.ln)} (CUR ${p.a[DATA.AK.curve]})</option>`).join('')}</select></div></div>
       ${!live ? `<div class="card"><h3>Philosophy presets</h3><p class="tiny muted" style="margin-top:-6px">Load a complete system: formation, instructions and the roles that make it tick. Your best XI is picked for it.</p><div class="idgrid">${Object.entries(DATA.COACH_IDS).map(([id, c]) => `<button class="idcard" data-a="tacPreset" data-v="${id}"><div class="ic">${c.icon}</div><b>${esc(c.name)}</b><p class="dim">${c.oop}${c.roles && c.roles.length ? ` · ${c.roles.slice(0, 3).map(r => TAC.ROLES[r].short).join(' ')}` : ''}</p></button>`).join('')}</div></div>` : ''}`;
   }
 
+  // everyone in the squad who isn't in the XI or on the bench: tap one, then a player in the XI or on the bench to swap
+  function reservesCard(t) {
+    const used = new Set([...t.lineup, ...(t.bench || [])]);
+    const all = L.squad(L.user()).filter(p => !used.has(p.id)).sort((a, b) => L.available(b) - L.available(a) || b.ovr - a.ovr);
+    if (!all.length) return '';
+    return `<div class="card"><h3>Reserves · ${all.length}</h3><div class="tiny muted mb8">Not in the matchday squad. Tap one, then tap a player in your XI or on the bench to swap them in.</div><div class="bench">${all.map(p => { const ok = L.available(p); return `<button class="bp${S.tac.bench === p.id ? ' sel' : ''}"${ok ? ` data-a="benchTap" data-v="${p.id}"` : ' style="opacity:.45"'}>${UI.face(p, 34)}<span>${esc(p.ln)}</span><span class="tiny">${UI.posB(p.pos)} ${ok ? p.ovr : p.inj > 0 ? '🩹' : '🟥'}</span></button>`; }).join('')}</div></div>`;
+  }
   SCREENS.tacticsBody = () => {
     S.liveTac = null;
     L.validateUser();
@@ -143,7 +151,10 @@
       if (S.liveTac && S.liveTac.live) { S.liveTac.sub(i, bid); return; }
       const out = t.lineup[i];
       t.lineup[i] = bid;
-      t.bench = (t.bench || []).map(x => (x === bid ? out : x));
+      const bench = t.bench || [];
+      // from the bench, the man coming off takes his seat; from the reserves, he takes a free seat or drops out
+      if (bench.includes(bid)) t.bench = bench.map(x => (x === bid ? out : x));
+      else if (out != null && bench.length < 9) bench.push(out);
       return after();
     }
     if (S.tac.sel != null && S.tac.sel !== i && i !== 0 && S.tac.sel !== 0) {
@@ -156,7 +167,17 @@
     S.tac.sel = S.tac.sel === i ? null : i;
     rerender();
   };
-  A.benchTap = v => { const id = +v; S.tac.bench = S.tac.bench === id ? null : id; S.tac.sel = null; rerender(); if (S.tac.bench) UI.toast('Now tap the player to replace', '', 1500); };
+  A.benchTap = v => {
+    const id = +v, t = tac(), bench = t.bench || [], cur = S.tac.bench;
+    // a reserve and a bench player tapped one after the other swap places (not mid-match: the bench is fixed then)
+    if (!S.liveTac && cur != null && cur !== id && bench.includes(cur) !== bench.includes(id)) {
+      const [onB, res] = bench.includes(cur) ? [cur, id] : [id, cur];
+      t.bench = bench.map(x => (x === onB ? res : x));
+      S.tac.bench = null;
+      UI.toast('Swapped onto the bench', '', 1200);
+      return after();
+    }
+    S.tac.bench = S.tac.bench === id ? null : id; S.tac.sel = null; rerender(); if (S.tac.bench) UI.toast('Now tap the player to replace', '', 1500); };
   A.tacRole = v => { const [i, r] = v.split(':'); TAC.setRole(tac(), +i, r); after(); };
   A.tacInstr = v => { const [i, k, x] = v.split(':'); const t = tac(); t.instr[+i] = { ...(t.instr[+i] || TAC.defaultInstr()), [k]: +x }; after(); };
   A.tacTeam = v => { const [k, x] = v.split(':'); tac().team[k] = +x; after(); };
