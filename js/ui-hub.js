@@ -19,14 +19,14 @@
   // ════════ HOME ════════
   function home() {
     const u = L.user();
-    return `<div class="scroll">${heroCard(u)}${nextCard()}${calStrip()}${challengeCard()}${inboxPreview()}${boardCard()}${miniTable()}${newsTeaser()}</div>`;
+    return `<div class="scroll">${heroCard(u)}${nextCard()}${lastResultCard()}${calStrip()}${challengeCard()}${inboxPreview()}${boardCard()}${miniTable()}${newsTeaser()}</div>`;
   }
   function heroCard(u) {
-    const pos = L.position(u.id), lg = L.league(u.leagueId), rec = (G.table[lg.id] || {})[u.id] || { w: 0, d: 0, l: 0, pts: 0 };
+    const pos = L.position(u.id), lg = L.league(u.leagueId), lrec = (G.table[lg.id] || {})[u.id] || { pts: 0 }, rec = L.seasonRecord(u.id);
     return `<div class="hero" style="${UI.teamVars(u)}"><div class="hcrest">${UI.crest(u, 170)}</div>
       <div class="kicker" style="color:rgba(255,255,255,.72)">${esc(lg.name)} · ${DATA.CLUB_IDS[u.ident].icon} ${esc(DATA.CLUB_IDS[u.ident].name)}</div>
       <div class="nm">${esc(u.name)}</div><div class="sub">${esc(G.mgr.name)} · ${DATA.COACH_IDS[G.mgr.ident].icon} ${esc(DATA.COACH_IDS[G.mgr.ident].name)}</div>
-      <div class="hero-stats"><div><b>${pos ? U.ord(pos) : '–'}</b><span>Position</span></div><div><b>${rec.pts}</b><span>Points</span></div><div><b>${rec.w}-${rec.d}-${rec.l}</b><span>W-D-L</span></div><div><b>${Math.round(L.teamLevel(u))}</b><span>Squad</span></div></div>
+      <div class="hero-stats"><div><b>${pos ? U.ord(pos) : '–'}</b><span>Position</span></div><div><b>${lrec.pts}</b><span>League pts</span></div><div><b>${rec.w}-${rec.d}-${rec.l}</b><span>W-D-L · all</span></div><div><b>${Math.round(L.teamLevel(u))}</b><span>Squad</span></div></div>
       <div class="flex between mt8">${UI.form(u.form)}<span class="tiny" style="color:rgba(255,255,255,.8)">${u.stadium.cap.toLocaleString()} seats</span></div></div>`;
   }
   function vsBlock(f) {
@@ -51,6 +51,17 @@
     return `<div class="next"><div class="flex between"><span class="kicker">${L.dateStr()}${L.windowOpen() ? ' · <span class="good">Window open</span>' : ''}</span><span class="tiny muted">${today ? `${today} games today` : 'No games today'}</span></div>
       ${nf ? `<div class="flex mt8" style="gap:8px"><span class="small muted">Next:</span>${UI.crest(T(nf.h === G.userTeamId ? nf.a : nf.h), 24)}<b class="small">${nf.h === G.userTeamId ? 'vs' : '@'} ${esc(T(nf.h === G.userTeamId ? nf.a : nf.h).name)}</b><span class="tiny muted">in ${nf.day - G.day} day${nf.day - G.day === 1 ? '' : 's'} · ${esc(UI.compLabel(nf))}</span></div>` : ''}
       <div class="grid2 mt12"><button class="btn primary big" data-a="advance">Next day</button><button class="btn big" data-a="skip">${I.ff} To next match</button></div></div>`;
+  }
+  // the most recent result, always from the user's side of the scoreline
+  function lastResultCard() {
+    const f = L.lastUserFixture();
+    if (!f) return '';
+    const u = L.user(), home = f.h === u.id, opp = T(home ? f.a : f.h);
+    const us = home ? f.hs : f.as, them = home ? f.as : f.hs, r = L.resultFor(f, u.id);
+    const col = r === 'W' ? 'var(--good)' : r === 'D' ? '#94a3b8' : 'var(--bad)', word = r === 'W' ? 'WIN' : r === 'D' ? 'DRAW' : 'LOSS';
+    const scorers = (f.ev || []).filter(e => e.t === 'goal' && e.s === (home ? 0 : 1) && e.p && G.players[e.p]).map(e => `${esc(G.players[e.p].ln)} ${e.m}'`);
+    return `<div class="card tap" data-a="boxScore" data-v="${f.id}" style="border-color:${col}"><div class="flex between"><span class="kicker">Last result · ${esc(UI.compName(f))}</span><span class="tag" style="background:${col};color:#0b0f17">${word}</span></div>
+      <div class="flex mt8" style="gap:10px">${UI.crest(u, 38)}<div class="big" style="color:${col}">${us} – ${them}</div>${UI.crest(opp, 38)}<div class="grow"><div class="bold small">${home ? 'vs' : '@'} ${esc(opp.name)}</div><div class="tiny muted">${f.pens ? `${home ? f.pens[0] : f.pens[1]}-${home ? f.pens[1] : f.pens[0]} on penalties · ` : ''}${scorers.length ? scorers.slice(0, 4).join(', ') : L.dateStr(f.day, true)}</div></div></div></div>`;
   }
   function calStrip() {
     const days = [];

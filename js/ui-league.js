@@ -37,7 +37,7 @@
   }
   function fxRow(f) {
     const h = T(f.h), a = T(f.a), me = f.h === G.userTeamId || f.a === G.userTeamId;
-    return `<div class="row ${f.done ? 'tap' : ''} ${me ? 'me' : ''}" ${f.done ? `data-a="boxScore" data-v="${f.id}"` : ''} style="min-height:44px"><span class="tag" style="min-width:34px;justify-content:center">${esc(UI.compLabel(f))}</span><span class="grow flex" style="justify-content:flex-end;gap:6px"><b class="small ellip">${esc(h.abbr)}</b>${UI.crest(h, 22)}</span><b style="font-family:var(--f-display);min-width:54px;text-align:center">${f.done ? `${f.hs} - ${f.as}` : L.dateStr(f.day, true)}</b><span class="grow flex" style="gap:6px">${UI.crest(a, 22)}<b class="small ellip">${esc(a.abbr)}</b></span>${f.pens ? `<span class="tiny muted">p${f.pens[0]}-${f.pens[1]}</span>` : ''}</div>`;
+    return `<div class="row ${f.done ? 'tap' : ''} ${me ? 'me' : ''}" ${f.done ? `data-a="boxScore" data-v="${f.id}"` : ''} style="min-height:44px"><span class="tag" style="min-width:34px;justify-content:center">${esc(UI.compLabel(f))}</span><span class="grow flex" style="justify-content:flex-end;gap:6px"><b class="small ellip">${esc(h.abbr)}</b>${UI.crest(h, 22)}</span><b style="font-family:var(--f-display);min-width:54px;text-align:center">${f.done ? `${f.hs} - ${f.as}` : L.dateStr(f.day, true)}</b><span class="grow flex" style="gap:6px">${UI.crest(a, 22)}<b class="small ellip">${esc(a.abbr)}</b></span>${f.pens ? `<span class="tiny muted">p${f.pens[0]}-${f.pens[1]}</span>` : ''}${me && f.done ? (r => `<span class="form"><i class="${r}">${r}</i></span>`)(L.resultFor(f, G.userTeamId)) : ''}</div>`;
   }
   A.fxRound = v => { S.fxRound = +v; UI.render(); };
   A.boxScore = v => {

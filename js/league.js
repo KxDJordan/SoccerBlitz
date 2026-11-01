@@ -600,6 +600,28 @@ const L = (() => {
       if (w === G.userTeamId || l === G.userTeamId) News.invitational(team(w), f);
     } else if (f.rd === '3rd') prize(team(winnerOf(f)), DATA.PRIZE.invitational.P, `${DATA.INVITATIONAL} third place`);
   }
+  // a finished fixture from one club's point of view: 'W', 'D' or 'L' (shoot-outs count as wins and losses)
+  function resultFor(f, tid) {
+    if (!f || !f.done) return null;
+    const mine = f.h === tid ? f.hs : f.as, theirs = f.h === tid ? f.as : f.hs;
+    if (mine !== theirs) return mine > theirs ? 'W' : 'L';
+    if (f.pens) return winnerOf(f) === tid ? 'W' : 'L';
+    return 'D';
+  }
+  // this season's record in every competition (league, cups, continental, invitational, showcase)
+  function seasonRecord(tid) {
+    const r = { w: 0, d: 0, l: 0, gf: 0, ga: 0, p: 0 };
+    for (const f of G.fixtures) {
+      if (!f.done || f.comp === 'A' || (f.h !== tid && f.a !== tid)) continue;
+      const x = resultFor(f, tid);
+      r.p++; r[x === 'W' ? 'w' : x === 'D' ? 'd' : 'l']++;
+      r.gf += f.h === tid ? f.hs : f.as; r.ga += f.h === tid ? f.as : f.hs;
+    }
+    return r;
+  }
+  function lastUserFixture() {
+    return G.fixtures.filter(f => f.done && f.comp !== 'A' && (f.h === G.userTeamId || f.a === G.userTeamId)).sort((a, b) => b.day - a.day || b.id - a.id)[0] || null;
+  }
   function winnerOf(f) {
     if (f.hs !== f.as) return f.hs > f.as ? f.h : f.a;
     if (f.pens) return f.pens[0] > f.pens[1] ? f.h : f.a;
@@ -1512,7 +1534,7 @@ const L = (() => {
   return {
     team, user, P, squad, league, isUser, calcOvr, roleRating, mkPlayer, mkCoach, marketWage, value, payroll, staffWages, logMoney, teamLevel,
     applyPhilosophy, applyRoles, growthInfo, setPlan, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
-    dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, attendance,
+    dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, resultFor, seasonRecord, lastUserFixture, attendance,
     table, acadTableRows, position, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
     askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,
     REGIONS, scoutCost, startScouting, scoutPlayer, signYouth, knowledge, seenOvr,

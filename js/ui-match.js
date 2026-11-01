@@ -278,9 +278,43 @@
     }
     L.simRest();
     S.report = { f, res, m };
+    // a tie decided on penalties: play the shoot-out out on screen before the report
+    if (res.pens && m.kicks) return shootout(f, m, res);
     resultSound(f, res);
     setTimeout(() => { if (S.screen === 'match') UI.go('report'); }, 400);
   }
+  function shootout(f, m, res) {
+    const ov = document.getElementById('overlay');
+    if (!ov) { UI.go('report'); return; }
+    const h = T(f.h), a = T(f.a), side = f.h === G.userTeamId ? 0 : 1;
+    const order = [];
+    for (let i = 0; i < Math.max(m.kicks[0].length, m.kicks[1].length); i++) for (const t of [0, 1]) if (m.kicks[t][i]) order.push({ t, ...m.kicks[t][i] });
+    const row = (t, team) => `<div class="flex mt8" style="gap:8px">${UI.crest(team, 30)}<b class="small" style="min-width:42px">${esc(team.abbr)}</b><div class="flex wrap grow" style="gap:5px" id="pk${t}"></div><b class="big" id="pks${t}" style="font-size:26px">0</b></div>`;
+    ov.innerHTML = `<div class="ht"><div class="box"><div class="kicker center">Penalty shoot-out</div><div class="center small muted mt4">${res.score[0]}-${res.score[1]} after 90 minutes</div>${row(0, h)}${row(1, a)}<div class="center bold mt12" id="pkmsg" style="min-height:22px"></div><div id="pkbtn"></div></div></div>`;
+    const score = [0, 0];
+    let i = 0;
+    const next = () => {
+      if (S.screen !== 'match') return;
+      if (i >= order.length) {
+        const won = res.pens[side] > res.pens[1 - side];
+        const msg = document.getElementById('pkmsg'), btn = document.getElementById('pkbtn');
+        if (msg) { msg.textContent = won ? '🎉 You win the shoot-out!' : `💔 ${T(side === 0 ? f.a : f.h).name} win the shoot-out`; msg.className = `center bold mt12 ${won ? 'good' : 'bad'}`; }
+        if (btn) btn.innerHTML = '<button class="btn primary block mt12" data-a="toReport">Full-time report</button>';
+        resultSound(f, res);
+        return;
+      }
+      const k = order[i++], p = G.players[k.pid];
+      if (k.ok) score[k.t]++;
+      const box = document.getElementById(`pk${k.t}`), sc = document.getElementById(`pks${k.t}`), msg = document.getElementById('pkmsg');
+      if (box) box.insertAdjacentHTML('beforeend', `<span class="tag ${k.ok ? 't-good' : 't-bad'}" title="${p ? esc(p.ln) : ''}">${k.ok ? '✓' : '✗'}</span>`);
+      if (sc) sc.textContent = score[k.t];
+      if (msg) { msg.textContent = `${p ? `${p.fn[0]}. ${p.ln}` : 'Kick'} ${k.ok ? 'scores!' : 'misses!'}`; msg.className = `center bold mt12 ${k.ok ? '' : 'warn'}`; }
+      Sfx.play(k.ok ? 'kick' : 'post');
+      setTimeout(next, 750);
+    };
+    setTimeout(next, 900);
+  }
+  A.toReport = () => UI.go('report');
   function resultSound(f, res) {
     const side = f.h === G.userTeamId ? 0 : 1;
     const w = L.winnerOf(f) === G.userTeamId && !(res.score[0] === res.score[1] && !res.pens);
@@ -295,14 +329,14 @@
     const { f, res, m } = R, h = T(f.h), a = T(f.a), side = f.h === G.userTeamId ? 0 : 1;
     const us = res.score[side], them = res.score[1 - side];
     const won = us > them || (us === them && res.pens && res.pens[side] > res.pens[1 - side]);
-    const verdict = won ? 'Victory' : us === them ? 'Draw' : 'Defeat';
+    const verdict = res.pens && us === them ? (won ? 'Victory on penalties' : 'Defeat on penalties') : won ? 'Victory' : us === them ? 'Draw' : 'Defeat';
     const goals = s => res.events.filter(e => e.type === 'goal' && e.team === s).map(e => `<div class="tiny">${e.pid && P(e.pid) ? esc(P(e.pid).ln) : 'OG'} ${e.min}'</div>`).join('');
     const motm = res.motm ? P(res.motm) : null;
     const mom = res.mom || [];
     const pts = mom.map((v, i) => `${(i / Math.max(1, mom.length - 1)) * 100},${50 - v * 45}`).join(' ');
     const others = L.todays(f.day).filter(x => x.comp === f.comp && x.id !== f.id && x.done && (f.comp !== 'L' || x.lg === f.lg));
     return `<div class="screen">${UI.topbar(verdict, esc(UI.compName(f)))}<div class="scroll noTab">
-      <div class="hero" style="${UI.teamVars(won ? L.user() : T(side === 0 ? f.a : f.h))}"><div class="vs" style="margin:0"><div class="side">${UI.crest(h, 64)}<b style="color:#fff">${esc(h.name)}</b>${goals(0)}</div><div class="mid" style="color:#fff;font-size:52px">${res.score[0]}-${res.score[1]}${res.pens ? `<small style="color:#fff">${res.pens[0]}-${res.pens[1]} on penalties</small>` : ''}</div><div class="side">${UI.crest(a, 64)}<b style="color:#fff">${esc(a.name)}</b>${goals(1)}</div></div></div>
+      <div class="hero" style="${UI.teamVars(won ? L.user() : T(side === 0 ? f.a : f.h))}"><div class="vs" style="margin:0"><div class="side">${UI.crest(h, 64)}<b style="color:#fff">${esc(h.name)}</b>${goals(0)}</div><div class="mid" style="color:#fff;font-size:52px">${res.score[0]}-${res.score[1]}${res.pens ? `<small style="color:#fff">${res.pens[0]}-${res.pens[1]} on penalties · ${esc(T(L.winnerOf(f)).abbr)} go through</small>` : ''}</div><div class="side">${UI.crest(a, 64)}<b style="color:#fff">${esc(a.name)}</b>${goals(1)}</div></div></div>
       ${motm ? `<div class="card tight"><div class="row tap" data-a="player" data-v="${motm.id}" style="border:0">${UI.face(motm, 46)}<div class="grow"><div class="kicker">⭐ Player of the match</div><div class="nm">${esc(motm.fn)} ${esc(motm.ln)}</div><div class="meta">${esc(T(motm.tid) ? T(motm.tid).name : '')}</div></div>${UI.rating((res.players.find(p => p.pid === motm.id) || {}).rating || 0)}</div></div>` : ''}
       ${mom.length > 4 ? `<div class="card"><h3>Momentum</h3><svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:80px"><line x1="0" y1="50" x2="100" y2="50" stroke="var(--line-strong)" stroke-width=".6"/><polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg><div class="flex between tiny muted"><span>▲ ${esc(h.abbr)}</span><span>▼ ${esc(a.abbr)}</span></div></div>` : ''}
       <div class="card">${statBars(res, h, a)}</div>
