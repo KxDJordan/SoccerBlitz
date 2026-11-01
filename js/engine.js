@@ -282,11 +282,13 @@ const Engine = (() => {
         shiftV = 0.2;
       }
       line = clamp(line, 0.06, 0.56);
-      const off = inPoss ? role.attack : role.defend;
-      let u = line + slot.u * depth + off.du;
-      if (inPoss) u += 0.035 * p.instr.runs;
+      // the role decides the movement; the focus (Defend / Balanced / Attack) stretches or tempers it
+      const off = inPoss ? role.attack : role.defend, f = p.instr.runs || 0;
+      const du = inPoss ? off.du * (1 + 0.45 * f) + 0.035 * f : off.du + 0.03 * f;
+      const dv = inPoss ? off.dv * (1 + 0.3 * f) : off.dv;
+      let u = line + slot.u * depth + du;
       const toward = Math.sign(0.5 - slot.v);
-      const v = 0.5 + (slot.v - 0.5) * widthF + toward * off.dv + (bv - 0.5) * shiftV;
+      const v = 0.5 + (slot.v - 0.5) * widthF + toward * dv + (bv - 0.5) * shiftV;
       if (oppLineU !== undefined) u = Math.min(u, Math.max(oppLineU, inPoss ? bu : 0) + 0.01);
       return this.fromUV(p.team, clamp(u, 0.03, 0.96), clamp(v, 0.03, 0.97));
     }
@@ -677,7 +679,7 @@ const Engine = (() => {
         const near = this.toU(p.team, m.pos.x) < 0.38 ? 0.3 : 0;
         const tight = clamp(0.6 + near - 0.06 * this.tac(p.team).team.mentality, 0.35, 1);
         spot = add(base, scale(sub(spot, base), tight));
-        leash = (zone === 'def' ? 30 : zone === 'mid' ? 13 * roam : 6 * roam) * Math.max(0.6, this.cfg.k);
+        leash = (zone === 'def' ? 30 : zone === 'mid' ? 13 * roam : 6 * roam) * Math.max(0.6, this.cfg.k) * (1 - 0.22 * (p.instr.runs || 0));
       } else {
         let sum = base, wsum = 1;
         for (const a of this.onPitch) {

@@ -75,10 +75,15 @@ const UI = (() => {
   const rateCol = r => (r >= 8 ? '#22d3ee' : r >= 7 ? '#22c55e' : r >= 6.3 ? '#eab308' : r > 0 ? '#f97316' : '#334155');
   const rating = r => `<span class="rating" style="background:${rateCol(r)}">${r ? r.toFixed(1) : '–'}</span>`;
   const fitBar = p => `<div class="bar" style="max-width:46px;height:5px"><i style="width:${p.fit}%;background:${p.fit > 80 ? 'var(--good)' : p.fit > 60 ? 'var(--warn)' : 'var(--bad)'}"></i></div>`;
-  const teamVars = t => `--team-1:${t.crest.c1};--team-2:${t.crest.c2}`;
+  // club-coloured cards carry white text: a very light primary hands over to the darker colour (or is deepened)
+  const teamVars = t => {
+    let a = t.crest.c1, b = t.crest.c2;
+    if (U.lum(a) > 0.45) { if (U.lum(b) < 0.3) [a, b] = [b, a]; else a = U.mix(a, '#0b0f17', 0.55); }
+    return `--team-1:${a};--team-2:${b}`;
+  };
   const tname = t => esc(t.name);
   const pname = p => `${esc(p.fn)} ${esc(p.ln)}`;
-  const status = p => (p.inj > 0 ? `<span class="tag t-bad">🩹 ${p.inj}d</span>` : p.ban > 0 ? `<span class="tag t-bad">⛔ ${p.ban}</span>` : p.listed ? '<span class="tag t-warn">Listed</span>' : p.wantsOut ? '<span class="tag t-warn">Unhappy</span>' : '');
+  const status = p => (p.trainPos && p.trainPos !== p.pos && !(p.inj > 0) ? `<span class="tag t-acc">🔄 ${p.trainPos} ${Math.round((p.retrain || 0) * 100)}%</span>` : p.inj > 0 ? `<span class="tag t-bad">🩹 ${p.inj}d</span>` : p.ban > 0 ? `<span class="tag t-bad">⛔ ${p.ban}</span>` : p.listed ? '<span class="tag t-warn">Listed</span>' : p.wantsOut ? '<span class="tag t-warn">Unhappy</span>' : '');
   function playerRow(p, opts = {}) {
     const right = opts.right != null ? opts.right : ovrB(p);
     const meta = opts.meta != null ? opts.meta : `${p.age} · ${esc(p.nat)}${p.tid >= 0 && !p.acad && p.tid !== G.userTeamId && G.teams[p.tid] ? ` · ${esc(G.teams[p.tid].abbr)}` : ''}`;
@@ -97,10 +102,29 @@ const UI = (() => {
   }
 
   // ── theme from the user's club ──
+  // UI themes (per device). Each sets the surfaces; the club's colours set the accent unless switched off.
+  const THEMES = {
+    midnight: { name: 'Midnight', bg: '#070c16', surface: '#0f1726', s3: '#1d2a45', acc: '#22c55e', acc2: '#fde047' },
+    stadium: { name: 'Stadium Lights', bg: '#040a1c', surface: '#0a1530', s3: '#162b58', acc: '#38bdf8', acc2: '#f472b6' },
+    pitch: { name: 'Pitchside', bg: '#04140c', surface: '#0a2416', s3: '#164027', acc: '#22c55e', acc2: '#fde047' },
+    arcade: { name: 'Neon Arcade', bg: '#0d0618', surface: '#170b2b', s3: '#2c1652', acc: '#ff2bd6', acc2: '#22e1ff' },
+    sunset: { name: 'Sunset', bg: '#140808', surface: '#22100e', s3: '#3d1e18', acc: '#fb923c', acc2: '#fde047' },
+    light: { name: 'Daylight', bg: '#f2f5fa', surface: '#ffffff', s3: '#e1e7f1', acc: '#2563eb', acc2: '#f59e0b' },
+  };
+  const pref = (k, d) => { try { return localStorage.getItem(`soccerblitz.${k}`) || d; } catch (e) { return d; } };
+  const setPref = (k, v) => { try { localStorage.setItem(`soccerblitz.${k}`, v); } catch (e) { /* storage blocked */ } };
   function applyTheme() {
+    const th = THEMES[pref('theme', 'midnight')] ? pref('theme', 'midnight') : 'midnight';
+    const root = document.documentElement;
+    if (root.dataset.theme !== th) {
+      root.dataset.theme = th;
+      root.style.background = THEMES[th].bg;
+      const meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute('content', THEMES[th].bg);
+    }
     const t = G && G.userTeamId != null && G.teams ? G.teams[G.userTeamId] : null;
     const b = document.body;
-    if (!t) { b.style.removeProperty('--accent'); b.style.removeProperty('--accent-2'); b.style.removeProperty('--on-accent'); return; }
+    if (!t || pref('clubAccent', 'on') === 'off') { b.style.removeProperty('--accent'); b.style.removeProperty('--accent-2'); b.style.removeProperty('--on-accent'); return; }
     let a = t.crest.c1, a2 = t.crest.c2;
     if (U.lum(a) < 0.035 || U.lum(a) > 0.85) [a, a2] = [a2, a];
     if (U.lum(a) < 0.035) a = U.mix(a, '#ffffff', 0.35);
@@ -220,7 +244,7 @@ const UI = (() => {
   }
 
   return {
-    S, A, SCREENS, I, WXI, esc, render, go, sheet, refreshSheet, closeSheet, toast, confirm, tabbar, topbar, seg, wire,
+    S, A, SCREENS, I, WXI, THEMES, pref, setPref, esc, render, go, sheet, refreshSheet, closeSheet, toast, confirm, tabbar, topbar, seg, wire,
     crest, face, posB, ovrB, potTxt, form, rating, rateCol, fitBar, teamVars, tname, pname, status, playerRow, teamChip, wxChip, compLabel, compName, ring, applyTheme,
   };
 })();

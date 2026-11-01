@@ -208,15 +208,46 @@
   function kidSheet(pid) {
     const p = P(pid);
     if (!p) return;
-    const roles = TAC.rolesFor(p.pos);
-    const focus = TAC.ROLES[p.focus];
-    UI.sheet(`${pcard(p)}
-      <div class="kicker mb8">Training plan</div><p class="tiny muted" style="margin-top:-2px">60% of his growth goes into the role's key attributes; the rest follows his position.</p>
-      ${roles.map(r => { const rr = L.roleRating(p, r.id); return `<button class="rolefit${p.focus === r.id ? ' on' : ''}" style="width:100%;text-align:left" data-a="setFocus" data-v="${pid}:${r.id}"><div><div class="bold small">${esc(r.name)} <span class="tag">${r.short}</span></div><div class="tiny muted">${r.keys.map(k => DATA.ATTR_NAME[k]).join(' · ')}</div></div><span class="ovr ${U.ovrClass(rr)}">${rr}</span></button>`; }).join('')}
-      ${attrsHTML(p, focus ? focus.keys : [])}
+    UI.sheet(`${pcard(p)}${devPanel(p)}
       <div class="grid2 mt12"><button class="btn primary ${p.age < 17 ? 'off' : ''}" data-a="promoteKid" data-v="${pid}">${p.age < 17 ? `Promote at 17` : 'Promote to first team'}</button><button class="btn danger" data-a="releaseKid" data-v="${pid}">Release</button></div>`, { vars: UI.teamVars(L.user()), refresh: () => kidSheet(pid) });
   }
-  A.setFocus = v => { const [pid, r] = v.split(':'); P(+pid).focus = r; L.save(); UI.refreshSheet(); UI.render(); };
+  // ── development plan: a position to grow into, a role inside it, and what that does to his growth ──
+  function outlookCard(p) {
+    const g = L.growthInfo(p);
+    const pct = x => `${Math.round(U.clamp(x, 0, 1) * 100)}%`;
+    const col = g.net >= 3.5 ? 'var(--good)' : g.net >= 1.5 ? 'var(--accent)' : g.net > 0.3 ? 'var(--warn)' : 'var(--bad)';
+    const factor = (label, v, max, txt) => `<div class="attr" style="grid-template-columns:96px 1fr 58px"><span class="small">${label}</span><div class="bar"><i style="width:${pct(v / max)}"></i></div><b class="small" style="font-size:12.5px">${txt}</b></div>`;
+    return `<div class="card"><h3>📈 Growth outlook<span class="grow"></span><span class="tag" style="background:${col};color:#0b0f17">${g.label}</span></h3>
+      <div class="flex between"><div><div class="big" style="color:${col}">${g.net >= 0 ? '+' : ''}${g.net.toFixed(1)}</div><div class="tiny muted">overall per season (est.)</div></div><div class="right"><div class="bold small">${esc(g.phase)}</div><div class="tiny muted">age ${p.age} · ${p.ovr} → potential ${U.potGrade(p.pot)} (${p.pot})</div></div></div>
+      <div class="prog mt8" title="Progress toward potential"><i style="width:${pct(p.ovr / Math.max(1, p.pot))}"></i></div>
+      <div class="mt8">${factor('Age curve', g.ageF, 0.62, `${Math.round((g.ageF / 0.62) * 100)}%`)}${factor('Potential gap', g.potF, 1.8, `${Math.max(0, p.pot - p.ovr)} left`)}${factor('Coaching &amp; minutes', g.mult, 2, `×${g.mult.toFixed(2)}`)}</div>
+      <p class="tiny dim" style="margin:6px 0 0">Growth is fastest under 20 and stops around 27–28; the further he is from his potential (and the higher it is), the quicker he climbs. Coaching, training intensity, minutes and personality multiply it.${g.decline > 0.2 ? ` From 30 he loses about ${g.decline.toFixed(1)} a season, mostly pace and stamina.` : ''}</p></div>`;
+  }
+  function devPanel(p) {
+    const g = L.growthInfo(p), target = g.pos, gkOnly = p.pos === 'GK';
+    const positions = DATA.POS.filter(x => (x === 'GK') === gkOnly);
+    const posChip = x => {
+      const nat = x === p.pos, alt = (p.alt || []).includes(x), on = x === target;
+      const wk = nat ? 0 : L.retrainWeeks(p, x);
+      return `<button class="chip${on ? ' on' : ''}" data-a="devPos" data-v="${p.id}:${x}">${nat ? '★ ' : alt ? '✓ ' : ''}${x}${nat ? '' : ` <span class="tiny" style="opacity:.7">${wk}w</span>`}</button>`;
+    };
+    const roles = TAC.rolesFor(target);
+    const focus = TAC.ROLES[p.focus] && TAC.ROLES[p.focus].slots.includes(target) ? TAC.ROLES[p.focus] : null;
+    const retraining = target !== p.pos;
+    return `${outlookCard(p)}
+      <div class="kicker mb8">1 · Position</div><p class="tiny muted" style="margin-top:-2px">★ natural · ✓ secondary. Pick a new one and he retrains week by week (younger players learn faster), then switches to it for good. His growth follows the position he's training for.</p>
+      <div class="chips" style="flex-wrap:wrap">${positions.map(posChip).join('')}</div>
+      ${retraining ? `<div class="card tight"><div class="flex between small"><span>🔄 Retraining <b>${p.pos} → ${target}</b> (${esc(DATA.POS_NAME[target])})</span><span class="muted">${Math.round(g.progress * 100)}% · ~${Math.max(1, Math.ceil(g.weeks * (1 - g.progress)))} wks left</span></div><div class="prog mt8"><i style="width:${g.progress * 100}%"></i></div><div class="tiny dim mt4">Would rate ${L.calcOvr(p, target)} there today · ${Math.round(TAC.fam(p, target) * 100)}% comfortable · growth slowed 15% while learning</div></div>` : ''}
+      <div class="kicker mt12 mb8">2 · Role</div><p class="tiny muted" style="margin-top:-2px">60% of his growth goes into the role's three key attributes; the rest follows the ${target} position.</p>
+      ${roles.map(r => { const rr = L.roleRating(p, r.id, target); return `<button class="rolefit${focus && focus.id === r.id ? ' on' : ''}" style="width:100%;text-align:left" data-a="devRole" data-v="${p.id}:${r.id}"><div><div class="bold small">${esc(r.name)} <span class="tag">${r.short}</span></div><div class="tiny muted">${r.keys.map(k => DATA.ATTR_NAME[k]).join(' · ')}</div></div><span class="ovr ${U.ovrClass(rr)}">${rr}</span></button>`; }).join('')}
+      <div class="kicker mt12 mb8">Projected over a season</div>${attrsHTML(p, focus ? focus.keys : [], g.proj)}`;
+  }
+  function planLine(p) {
+    const g = L.growthInfo(p), r = TAC.ROLES[p.focus];
+    return `<button class="card tight mt8" data-a="focusSheet" data-v="${p.id}" style="width:100%;text-align:left;display:block"><div class="flex between"><div class="small">🎯 <b>${g.pos !== p.pos ? `Retraining → ${g.pos}` : p.pos}</b> · ${r ? esc(r.name) : 'no role set'}</div><span class="tag ${g.net >= 1.5 ? 't-good' : g.net > 0.3 ? 't-warn' : 't-bad'}">${g.label} ${g.net >= 0 ? '+' : ''}${g.net.toFixed(1)}/season</span></div></button>`;
+  }
+  A.devPos = v => { const [pid, pos] = v.split(':'); L.setPlan(+pid, pos); UI.refreshSheet(); UI.render(); };
+  A.devRole = v => { const [pid, r] = v.split(':'); L.setPlan(+pid, null, r); UI.refreshSheet(); UI.render(); };
   A.promoteKid = v => { const p = P(+v); if (L.promote(+v)) { UI.closeSheet(); UI.toast(`🎓 ${esc(p.fn)} ${esc(p.ln)} joins the first team!`); UI.render(); } };
   A.releaseKid = v => { const p = P(+v); UI.confirm('Release prospect?', `${esc(p.fn)} ${esc(p.ln)} leaves the academy for good.`, 'Release', () => { L.releaseAcademy(+v); UI.render(); }, true); };
 
@@ -253,12 +284,12 @@
     return `<div class="pcard" style="${t ? UI.teamVars(t) : '--team-1:#334155;--team-2:#94a3b8'}"><div class="num">${p.num || ''}</div><div class="flex" style="align-items:flex-start">${UI.face(p, 76)}<div class="grow"><div class="flex" style="gap:5px">${UI.posB(p.pos)}${(p.alt || []).map(UI.posB).join('')}</div><div class="pn mt4">${esc(p.fn)}<br>${esc(p.ln)}</div><div class="small" style="opacity:.85">${Art.flag(p.nat, 16)} ${esc(p.nat)} · ${p.age} yrs · ${p.foot === 'L' ? 'Left' : 'Right'} foot</div></div><div class="center">${v.exact ? `<span class="ovr lg ${U.ovrClass(p.ovr)}">${p.ovr}</span>` : `<span class="ovr lg scout" style="color:#fff;font-size:15px">${v.lo}-${v.hi}</span>`}<div class="tiny mt4" style="opacity:.8">POT ${UI.potTxt(p)}</div></div></div>
       <div class="flex mt8" style="gap:6px;flex-wrap:wrap">${t ? `<span class="tag" style="background:rgba(0,0,0,.3);color:#fff">${UI.crest(t, 14)} ${esc(t.name)}</span>` : p.tid === -1 ? '<span class="tag t-good">Free agent</span>' : p.tid === -3 ? '<span class="tag t-acc">Scouted prospect</span>' : ''}${p.acad ? '<span class="tag t-acc">Academy</span>' : ''}<span class="tag" style="background:rgba(0,0,0,.3);color:#fff">${esc(DATA.PERSONALITIES[p.pers] ? DATA.PERSONALITIES[p.pers].name : p.pers)}</span>${k < 3 ? `<span class="tag t-warn">Scouted ${k}/3</span>` : ''}</div></div>`;
   }
-  function attrsHTML(p, keys = []) {
+  function attrsHTML(p, keys = [], proj = null) {
     const k = L.knowledge(p);
     if (k < 2) return `<div class="card tight center"><div class="small muted">Attributes unknown. Scout him for a full report.</div>${p.tid !== G.userTeamId ? `<button class="btn sm mt8" data-a="scoutPlayer" data-v="${p.id}">${I.scope} Scout · ${U.money(0.03)}</button>` : ''}</div>`;
     const fuzz = k < 3;
     const groups = DATA.ATTR_GROUPS.filter(g => g.id !== 'gk' || p.pos === 'GK');
-    return `<div class="card tight">${groups.map(g => `<div class="kicker mt4 mb8">${g.label}</div>${g.keys.map(key => { let v = p.a[DATA.AK[key]]; if (fuzz) v = Math.round(v / 5) * 5; return `<div class="attr${keys.includes(key) ? ' key' : ''}"><span>${DATA.ATTR_NAME[key]}</span><div class="bar"><i class="${U.ovrClass(v)}" style="width:${v}%"></i></div><b>${fuzz ? '~' : ''}${v}</b></div>`; }).join('')}`).join('')}</div>`;
+    return `<div class="card tight">${groups.map(g => `<div class="kicker mt4 mb8">${g.label}</div>${g.keys.map(key => { let v = p.a[DATA.AK[key]]; if (fuzz) v = Math.round(v / 5) * 5; const gain = proj ? proj[DATA.AK[key]] : 0; return `<div class="attr${keys.includes(key) ? ' key' : ''}"${proj ? ' style="grid-template-columns:92px 1fr 62px"' : ''}><span>${DATA.ATTR_NAME[key]}</span><div class="bar" style="position:relative"><i class="${U.ovrClass(v)}" style="width:${v}%"></i>${gain > 0 ? `<i style="position:absolute;top:0;left:${v}%;width:${gain}%;background:var(--good);opacity:.55"></i>` : ''}</div><b>${fuzz ? '~' : ''}${v}${proj ? ` <span class="tiny ${gain > 0 ? 'good' : 'dim'}" style="font-family:var(--f-body)">${gain > 0 ? `+${gain}` : '·'}</span>` : ''}</b></div>`; }).join('')}`).join('')}</div>`;
   }
   function rolesHTML(p) {
     const roles = TAC.rolesFor(p.pos).map(r => ({ r, v: L.roleRating(p, r.id) })).sort((a, b) => b.v - a.v).slice(0, 4);
@@ -276,7 +307,7 @@
     const short = G.shortlist.includes(pid);
     let actions = '';
     if (mine) {
-      actions = `<div class="grid2"><button class="btn" data-a="renewSheet" data-v="${pid}">📝 Contract</button><button class="btn" data-a="toggleList" data-v="${pid}">${p.listed ? 'Unlist' : '🏷️ Transfer list'}</button></div><div class="grid2 mt8"><button class="btn" data-a="focusSheet" data-v="${pid}">🎯 Training</button><button class="btn danger" data-a="releaseP" data-v="${pid}">Release</button></div>`;
+      actions = `<div class="grid2"><button class="btn" data-a="renewSheet" data-v="${pid}">📝 Contract</button><button class="btn" data-a="toggleList" data-v="${pid}">${p.listed ? 'Unlist' : '🏷️ Transfer list'}</button></div><div class="grid2 mt8"><button class="btn" data-a="focusSheet" data-v="${pid}">🎯 Development</button><button class="btn danger" data-a="releaseP" data-v="${pid}">Release</button></div>`;
     } else if (p.tid === -3) {
       actions = `<button class="btn primary block" data-a="signYouth" data-v="${pid}">Sign to academy · ${U.money(p.fee)}</button>`;
     } else {
@@ -285,6 +316,7 @@
     UI.sheet(`${pcard(p)}
       <div class="kv mb12"><div><b>${k >= 2 || mine ? U.money(val) : '?'}</b><span>Value</span></div><div><b>${U.wage(p.wage).replace('/wk', '')}</b><span>Wage/wk</span></div><div><b>${p.tid === -1 ? 'Free' : `${p.yrs}y`}</b><span>Contract</span></div><div><b>${p.mor}</b><span>Morale</span></div><div><b>${p.fit}%</b><span>Fitness</span></div><div><b>${p.inj > 0 ? `${p.inj}d` : p.ban > 0 ? `Ban ${p.ban}` : 'Fit'}</b><span>Status</span></div></div>
       ${actions}
+      ${mine ? planLine(p) : ''}
       <div class="kicker mt12 mb8">This season</div><div class="kv mb12"><div><b>${st.gp}</b><span>Games</span></div><div><b>${st.g}</b><span>Goals</span></div><div><b>${st.a}</b><span>Assists</span></div><div><b>${avg}</b><span>Avg rating</span></div><div><b>${st.motm}</b><span>MOTM</span></div><div><b>${st.hits || 0}</b><span>Big hits</span></div></div>
       ${rolesHTML(p)}
       ${attrsHTML(p, p.focus && TAC.ROLES[p.focus] ? TAC.ROLES[p.focus].keys : [])}
@@ -298,9 +330,8 @@
   A.releaseP = v => { const p = P(+v); const pay = +((p.wage * 52 * Math.max(0, p.yrs) * 0.5) / 1000).toFixed(2); UI.confirm(`Release ${p.ln}?`, `You'll pay a settlement of ${U.money(pay)} and he becomes a free agent.`, 'Release', () => { L.release(+v); UI.toast(`${esc(p.ln)} released`); UI.render(); }, true); };
   A.focusSheet = v => {
     const p = P(+v);
-    UI.sheet(`<h2>Training focus</h2><p class="small muted">${esc(p.fn)} ${esc(p.ln)} will channel his growth into this role's key attributes.</p>${TAC.rolesFor(p.pos).map(r => { const rr = L.roleRating(p, r.id); return `<button class="rolefit${p.focus === r.id ? ' on' : ''}" style="width:100%;text-align:left" data-a="setFocusSr" data-v="${p.id}:${r.id}"><div><div class="bold small">${esc(r.name)}</div><div class="tiny muted">${r.keys.map(k => DATA.ATTR_NAME[k]).join(' · ')}</div></div><span class="ovr ${U.ovrClass(rr)}">${rr}</span></button>`; }).join('')}`, { refresh: () => A.focusSheet(v) });
+    UI.sheet(`<h2>Development plan</h2><div class="flex mb12">${UI.face(p, 48)}<div class="grow"><div class="bold">${esc(p.fn)} ${esc(p.ln)}</div><div class="small muted">${UI.posB(p.pos)} ${p.age} yrs · ${p.ovr} overall</div></div><button class="btn xs" data-a="player" data-v="${p.id}">Profile</button></div>${devPanel(p)}`, { vars: UI.teamVars(L.user()), refresh: () => A.focusSheet(v) });
   };
-  A.setFocusSr = v => { const [pid, r] = v.split(':'); P(+pid).focus = r; L.save(); UI.toast('Training plan set'); A.player(+pid); };
 
   // ── contracts ──
   A.renewSheet = v => contractSheet(+v, 'renew');

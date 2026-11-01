@@ -39,10 +39,10 @@ const L = (() => {
     for (let i = 0; i < w.length; i++) s += p.a[i] * w[i];
     return Math.round(s);
   }
-  function roleRating(p, roleId) {
+  function roleRating(p, roleId, at) {
     const r = TAC.ROLES[roleId];
     if (!r) return calcOvr(p);
-    const pos = r.slots.includes(p.pos) ? p.pos : r.slots[0];
+    const pos = at && r.slots.includes(at) ? at : r.slots.includes(p.pos) ? p.pos : r.slots[0];
     const keys = r.keys.length ? U.avg(r.keys.map(k => p.a[AK[k]])) : calcOvr(p, pos);
     return Math.round((calcOvr(p, pos) * 0.65 + keys * 0.35) * TAC.fam(p, pos));
   }
@@ -209,20 +209,42 @@ const L = (() => {
     if (!quiet && G.ready) News.coachHired(t, c);
   }
 
-  // AI tactics: the coach's philosophy picks the shapes and instructions; roles fit the players
-  function aiTactics(t) {
-    const c = G.coaches[t.coach];
-    const id = DATA.COACH_IDS[c ? c.ident : 'developer'];
-    const tac = TAC.make(id.oop, id.ip, id.team);
-    t.tac = tac;
-    autoLineup(t);
+  // a philosophy's favourite roles on the players in its shape (best fit where it has no favourite)
+  function applyRoles(t, identId, noise = 0) {
+    const id = DATA.COACH_IDS[identId] || DATA.COACH_IDS.developer, tac = t.tac, liked = new Set(id.roles || []);
+    // inverting roles go on one flank only, so the other keeps the width; other favourites at most twice
+    const ONE = new Set(['ifb', 'iwb', 'flb', 'iw']), used = {};
     tac.lineup.forEach((pid, i) => {
       const p = P(pid);
       if (!p) return;
-      const best = (pos, cur) => TAC.rolesFor(pos).reduce((a, r) => (roleRating(p, r.id) + U.rand(0, 3) > a.v ? { id: r.id, v: roleRating(p, r.id) } : a), { id: cur, v: -1 }).id;
-      tac.rOOP[i] = best(TAC.oopPos(tac, i), tac.rOOP[i]);
-      tac.rIP[i] = best(TAC.ipPos(tac, i), tac.rIP[i]);
+      const pos = TAC.oopPos(tac, i);
+      let best = tac.rOOP[i], bv = -1;
+      for (const r of TAC.rolesFor(pos)) {
+        const cap = ONE.has(r.id) ? 1 : 2, fav = liked.has(r.id) && (used[r.id] || 0) < cap;
+        const v = roleRating(p, r.id, pos) + (fav ? 4 : 0) - (ONE.has(r.id) && (used[r.id] || 0) >= 1 ? 6 : 0) + U.rand(0, noise);
+        if (v > bv) { bv = v; best = r.id; }
+      }
+      used[best] = (used[best] || 0) + 1;
+      TAC.setRole(tac, i, best);
     });
+  }
+  // a whole system: shape, instructions and roles
+  function applyPhilosophy(t, identId) {
+    const id = DATA.COACH_IDS[identId] || DATA.COACH_IDS.developer;
+    t.tac = t.tac ? TAC.normalize(t.tac) : TAC.make(id.oop, null, id.team);
+    TAC.setFormation(t.tac, 'oop', id.oop);
+    Object.assign(t.tac.team, id.team);
+    autoLineup(t, true);
+    applyRoles(t, identId);
+  }
+  // AI tactics: the coach's philosophy picks the shape, instructions and the roles it likes; players fit the roles
+  function aiTactics(t) {
+    const c = G.coaches[t.coach];
+    const id = DATA.COACH_IDS[c ? c.ident : 'developer'];
+    const tac = TAC.make(id.oop, null, id.team);
+    t.tac = tac;
+    autoLineup(t);
+    applyRoles(t, c ? c.ident : 'developer', 2.5);
   }
   // best XI for the OOP shape: scarce slots first, greedy by (overall × familiarity × fitness)
   function available(p) { return p && p.inj <= 0 && p.ban <= 0; }
@@ -256,7 +278,7 @@ const L = (() => {
   }
   // make sure the user's saved lineup can take the field: swap out the injured, banned and departed
   function validateUser() {
-    const t = user(), tac = t.tac, fixes = [];
+    const t = user(), tac = TAC.normalize(t.tac), fixes = [];
     tac.lineup.forEach((pid, i) => {
       const p = P(pid);
       if (!p || p.tid !== t.id || !available(p)) { if (p) fixes.push(`${p.ln} (${p.inj > 0 ? 'injured' : p.ban > 0 ? 'suspended' : 'left'})`); tac.lineup[i] = null; }
@@ -306,7 +328,38 @@ const L = (() => {
     refreshStaffPool();
     for (let i = 0; i < 70; i++) { const p = mkPlayer(U.pick(DATA.POS), U.ri(45, 70), U.ri(19, 34), U.ri(0, 3)); toFA(p); }
   }
+  // a club of the player's own making takes over an existing slot: same division, fresh identity and squad
+  const STRENGTH = { minnow: [35, 20], mid: [60, 40], contender: [82, 60] };
+  function customizeTeam(tid, c) {
+    const t = team(tid);
+    if (!t._orig) t._orig = { name: t.name, abbr: t.abbr, city: t.city, crest: { ...t.crest }, kit: { ...t.kit }, away: { ...t.away }, stadium: { ...t.stadium }, ident: t.ident, rep: t.rep, founded: t.founded, fin: { ...t.fin } };
+    t.name = c.name.trim();
+    t.city = (c.city || '').trim() || t.name.split(' ')[0];
+    const want = (c.abbr || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3);
+    t.abbr = '';
+    t.abbr = want.length === 3 && !G.teams.some(x => x !== t && x.abbr === want) ? want : abbr(t.name);
+    t.crest = { shape: c.shape, icon: c.icon, c1: c.c1, c2: c.c2, c3: c.c2 };
+    t.kit = { style: c.style, c1: c.c1, c2: c.c2, c3: c.shorts || '#F4F5F7' };
+    t.away = { style: 'plain', c1: c.c2, c2: c.c1, c3: c.c2 };
+    t.ident = c.ident;
+    t.rep = (STRENGTH[c.strength] || STRENGTH.mid)[t.tier];
+    t.stadium = { name: (c.stadium || '').trim() || `${t.city} Park`, cap: Math.round((t.tier === 0 ? 18000 + t.rep * 520 : 6000 + t.rep * 260) / 500) * 500 };
+    t.fin.bal = +(t.tier === 0 ? 6 + t.rep * 0.3 : 1.5 + t.rep * 0.1).toFixed(1);
+    t.founded = G.year; t.trophies = []; t.hist = []; t.custom = true;
+    for (const pid of t.squad) delete G.players[pid];
+    t.squad = [];
+    genSquad(t);
+    return t;
+  }
+  // backing out of the creator gives the division its original club back
+  function restoreTeam(tid) {
+    const t = team(tid);
+    if (!t || !t._orig) return;
+    Object.assign(t, t._orig);
+    delete t._orig; delete t.custom;
+  }
   function startCareer(cfg) {
+    for (const t of G.teams) delete t._orig;
     G.mgr.name = cfg.mgrName || 'The Gaffer';
     G.mgr.ident = cfg.mgrIdent || 'gegenpress';
     G.mode = cfg.mode || 'career';
@@ -316,8 +369,8 @@ const L = (() => {
     if (oldCoach) { oldCoach.tid = -1; G.coachPool.push(oldCoach.id); }
     ut.coach = null;
     const id = DATA.COACH_IDS[G.mgr.ident];
-    ut.tac = TAC.make(id.oop, id.ip, id.team);
-    autoLineup(ut);
+    ut.tac = null;
+    applyPhilosophy(ut, G.mgr.ident);
     // starting staff
     G.staff.ast = takeStaff('ast', 50); G.staff.fit = takeStaff('fit', 48); G.staff.yth = takeStaff('yth', 48); G.staff.sct = [takeStaff('sct', 50)];
     // academy
@@ -708,10 +761,83 @@ const L = (() => {
     const a = p.age;
     return a <= 17 ? 0.62 : a <= 19 ? 0.5 : a <= 21 ? 0.38 : a <= 23 ? 0.24 : a <= 25 ? 0.12 : a <= 27 ? 0.05 : 0;
   }
-  // spend growth points on attributes: the training focus role's keys first, then the position's weights
+  // how much more there is in him: the gap to his potential, and how high that ceiling is
+  function potFactor(p) {
+    const room = U.clamp((p.pot - p.ovr) / 10, 0, 1.4);
+    return room * U.clamp(0.85 + (p.pot - 65) / 120, 0.7, 1.3);
+  }
+  // everything around the player that speeds him up or slows him down (coaching, training, identity, minutes…)
+  function devMult(p, t) {
+    const coach = t && isUser(t.id) ? (G.staff.ast != null && G.coaches[G.staff.ast] ? G.coaches[G.staff.ast].rating : 50) : 60;
+    const yth = p.acad && G.staff.yth != null && G.coaches[G.staff.yth] ? G.coaches[G.staff.yth].rating : 50;
+    const train = t && isUser(t.id) ? { light: 0.75, normal: 1, hard: 1.3 }[G.train] : 1;
+    const ident = t && t.ident === 'academy' && p.age <= 21 ? 1.25 : 1;
+    const mgr = t && isUser(t.id) && G.mgr.ident === 'developer' && p.age <= 23 ? 1.2 : 1;
+    const pro = p.pers === 'pro' ? 1.2 : p.pers === 'flair' ? 0.95 : 1;
+    const minutes = p.acad ? 1 : U.clamp(0.6 + (p.st.min || 0) / Math.max(1, (G.day / 7) * 90) * 0.8, 0.6, 1.3);
+    const lvl = p.acad ? 1 + (yth - 50) / 120 + (t ? t.acad.level * 0.05 : 0) : 1 + (coach - 50) / 160;
+    // retraining eats into the time he'd otherwise spend improving
+    const retrain = p.trainPos && p.trainPos !== p.pos ? 0.85 : 1;
+    return train * ident * mgr * pro * minutes * lvl * retrain * (p.acad ? 1.15 : 1);
+  }
+  // weeks of training to learn a new position: the young learn fastest, and nearby positions come easier
+  function retrainWeeks(p, pos) {
+    if (!pos || pos === p.pos) return 0;
+    const base = p.age <= 20 ? 8 : p.age <= 24 ? 11 : p.age <= 28 ? 15 : 20;
+    const near = p.alt && p.alt.includes(pos) ? 0.4 : 1.6 - TAC.fam({ ...p, trainPos: null, retrain: 0 }, pos);
+    return Math.max(3, Math.round(base * near));
+  }
+  const WEEKS = 24;
+  // the development outlook the UI shows, built from the same numbers weeklyDev uses
+  function growthInfo(p) {
+    const t = p.tid >= 0 ? team(p.tid) : null;
+    const ageF = growthRate(p), potF = potFactor(p), mult = devMult(p, t);
+    const weekly = ageF * potF * mult;
+    const season = Math.min(Math.max(0, p.pot - p.ovr), weekly * WEEKS);
+    const pro = (p.pers === 'pro' ? 0.6 : 1) * (t && t.ident === 'oldguard' ? 0.6 : 1);
+    const declinePts = (p.age >= 30 ? (p.age - 29) * 0.06 * WEEKS * pro : 0) + (p.age >= 31 ? (p.age - 30) * 1.5 : 0);
+    const decline = declinePts * 0.12;
+    const net = season - decline;
+    const phase = p.age <= 19 ? 'Breakthrough years' : p.age <= 23 ? 'Developing' : p.age <= 27 ? 'Entering his prime' : p.age <= 29 ? 'At his peak' : 'Veteran: physical decline';
+    const label = net >= 6 ? 'Explosive' : net >= 3.5 ? 'Rapid' : net >= 1.5 ? 'Steady' : net > 0.3 ? 'Slow' : net > -0.5 ? 'Plateau' : 'Declining';
+    // where a season of growth points would land: 60% on the role's keys, the rest by the target position
+    const pts = weekly * 6.5 * WEEKS, pos = p.trainPos || p.pos, w = DATA.OVR_W[pos];
+    const role = p.focus && TAC.ROLES[p.focus] && TAC.ROLES[p.focus].slots.includes(pos) ? TAC.ROLES[p.focus] : null;
+    const keys = role ? role.keys.map(k => AK[k]) : [];
+    const proj = p.a.map((v, i) => Math.min(99 - v, Math.round(pts * ((keys.includes(i) ? 0.6 / keys.length : 0) + (keys.length ? 0.4 : 1) * w[i]))));
+    return { ageF, potF, mult, weekly, season, decline, net, phase, label, proj, pos, weeks: retrainWeeks(p, p.trainPos), progress: p.retrain || 0 };
+  }
+  // the player's development plan: a position to grow into, and a role within it
+  function setPlan(pid, pos, roleId) {
+    const p = P(pid);
+    if (!p) return;
+    if (pos) {
+      if ((p.pos === 'GK') !== (pos === 'GK')) return;
+      if (pos === p.pos) { p.trainPos = null; p.retrain = 0; }
+      else if (pos !== p.trainPos) { p.trainPos = pos; p.retrain = 0; }
+      const target = p.trainPos || p.pos;
+      if (!p.focus || !TAC.ROLES[p.focus] || !TAC.ROLES[p.focus].slots.includes(target)) p.focus = TAC.defaultRole(target);
+    }
+    if (roleId && TAC.ROLES[roleId]) p.focus = roleId;
+    save();
+  }
+  function retrainWeek(p) {
+    if (!p.trainPos || p.trainPos === p.pos) return;
+    p.retrain = Math.min(1, (p.retrain || 0) + 1 / retrainWeeks(p, p.trainPos));
+    if (p.retrain < 1) return;
+    const old = p.pos;
+    p.pos = p.trainPos;
+    p.alt = [old, ...(p.alt || []).filter(x => x !== p.pos && x !== old)].slice(0, 3);
+    p.trainPos = null; p.retrain = 0;
+    retarget(p);
+    if (p.tid === G.userTeamId) Career.inbox({ type: 'scout', pid: p.id, title: `${p.ln} is now a ${DATA.POS_NAME[p.pos]}`, body: `${p.fn} ${p.ln} has finished retraining and plays ${p.pos} naturally (${p.ovr} overall there). ${old} stays in his locker as a secondary position.`, actions: [{ label: 'View player', act: 'player', v: p.id }] });
+  }
+  // spend growth points on attributes: the training focus role's keys first, then the target position's weights
   function spend(p, pts) {
     p.gp = (p.gp || 0) + pts;
-    const w = DATA.OVR_W[p.pos], role = p.focus && TAC.ROLES[p.focus], keys = role ? role.keys.map(k => AK[k]) : [];
+    const pos = p.trainPos || p.pos, w = DATA.OVR_W[pos];
+    const role = p.focus && TAC.ROLES[p.focus] && TAC.ROLES[p.focus].slots.includes(pos) ? TAC.ROLES[p.focus] : null;
+    const keys = role ? role.keys.map(k => AK[k]) : [];
     let guard = 0;
     while (p.gp >= 1 && guard++ < 40) {
       p.gp -= 1;
@@ -731,17 +857,9 @@ const L = (() => {
   }
   function weeklyDev(p, t) {
     if (p.inj > 0) return;
-    const coach = t && isUser(t.id) ? (G.staff.ast != null && G.coaches[G.staff.ast] ? G.coaches[G.staff.ast].rating : 50) : 60;
-    const yth = p.acad && G.staff.yth != null && G.coaches[G.staff.yth] ? G.coaches[G.staff.yth].rating : 50;
-    const train = t && isUser(t.id) ? { light: 0.75, normal: 1, hard: 1.3 }[G.train] : 1;
-    const ident = t && t.ident === 'academy' && p.age <= 21 ? 1.25 : 1;
-    const mgr = t && isUser(t.id) && G.mgr.ident === 'developer' && p.age <= 23 ? 1.2 : 1;
-    const pro = p.pers === 'pro' ? 1.2 : p.pers === 'flair' ? 0.95 : 1;
-    const minutes = p.acad ? 1 : U.clamp(0.6 + (p.st.min || 0) / Math.max(1, (G.day / 7) * 90) * 0.8, 0.6, 1.3);
-    const lvl = p.acad ? 1 + (yth - 50) / 120 + (t ? t.acad.level * 0.05 : 0) : 1 + (coach - 50) / 160;
-    const room = U.clamp((p.pot - p.ovr) / 10, 0, 1.4);
-    const gain = growthRate(p) * room * train * ident * mgr * pro * minutes * lvl;
-    if (gain > 0) spend(p, gain * 6.5 * (p.acad ? 1.15 : 1));
+    retrainWeek(p);
+    const gain = growthRate(p) * potFactor(p) * devMult(p, t);
+    if (gain > 0) spend(p, gain * 6.5);
     if (p.age >= 30 && rng() < (p.age - 29) * 0.06 * (p.pers === 'pro' ? 0.6 : 1) * (t && t.ident === 'oldguard' ? 0.6 : 1)) decline(p, 1);
   }
   function seasonDev(p) {
@@ -1336,8 +1454,7 @@ const L = (() => {
     G.userTeamId = tid;
     if (repl) hireManager(old, repl, true);
     const id = DATA.COACH_IDS[G.mgr.ident];
-    nu.tac = nu.tac || TAC.make(id.oop, id.ip, id.team);
-    autoLineup(nu);
+    applyPhilosophy(nu, G.mgr.ident);
     // the academy and staff stay behind: start fresh
     for (const p of academy()) { p.tid = old.id; p.acad = false; joinTeam(p, old); }
     G.acad = [];
@@ -1381,6 +1498,8 @@ const L = (() => {
       if (!g || !g.teams || !g.players) return false;
       G = g;
       G.ready = true;
+      // older saves had separate in/out-of-possession shapes: fold them into one shape with roles
+      for (const t of G.teams) if (t.tac) TAC.normalize(t.tac);
       return true;
     } catch (e) { return false; }
   }
@@ -1392,7 +1511,7 @@ const L = (() => {
 
   return {
     team, user, P, squad, league, isUser, calcOvr, roleRating, mkPlayer, mkCoach, marketWage, value, payroll, staffWages, logMoney, teamLevel,
-    newCareer, genWorld, startCareer, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
+    applyPhilosophy, applyRoles, growthInfo, setPlan, retrainWeeks, newCareer, genWorld, startCareer, customizeTeam, restoreTeam, autoLineup, validateUser, aiTactics, available, academy, promote, releaseAcademy, rivalAcademy, mkAcademy,
     dateStr, windowOpen, todays, userFixture, userAcadFixture, nextUserFixture, pending, simRest, advanceDay, applyResult, quickSim, quickAcad, winnerOf, attendance,
     table, acadTableRows, position, expectedPos, strength, boostFor, CUP_NAMES, endSeason, newSeason,
     askingPrice, evalOffer, wageDemand, willingness, wageRoom, weeklyIncome, completeSigning, sellTo, executeTrade, release, renew, needs, toFA, joinTeam,

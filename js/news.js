@@ -144,7 +144,7 @@ const News = (() => {
   }
   function coachHired(t, c) {
     const id = DATA.COACH_IDS[c.ident];
-    post({ tag: 'coach', tid: t.id, title: `${t.name} appoint ${c.fn} ${c.ln}`, body: `${c.ln} brings a ${id.icon} ${id.name} identity: ${id.desc} Expect ${t.name} to line up ${id.oop} without the ball and ${id.ip} with it.`, by: WRITERS[3] });
+    post({ tag: 'coach', tid: t.id, title: `${t.name} appoint ${c.fn} ${c.ln}`, body: `${c.ln} brings a ${id.icon} ${id.name} identity: ${id.desc} Expect ${t.name} to line up in a ${id.oop}${id.roles && id.roles.length ? ` built around ${id.roles.slice(0, 3).map(r => TAC.ROLES[r].name.toLowerCase()).join(', ')} roles` : ''}.`, by: WRITERS[3] });
   }
   function coachPoached(c, from, to) {
     post({ tag: 'coach', tid: to.id, title: `${to.name} poach ${c.ln} from ${from.name}`, body: `${from.name} are left reeling as their manager ${c.fn} ${c.ln} jumps ship for ${to.name}. His ${DATA.COACH_IDS[c.ident].name} philosophy goes with him.`, by: WRITERS[0] });

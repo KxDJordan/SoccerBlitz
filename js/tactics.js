@@ -110,7 +110,8 @@ const TAC = (() => {
     F('5-3-2', [...B5, s('MF', 0.45, 0.28), s('DM', 0.36, 0.5), s('MF', 0.45, 0.72), s('ST', 1, 0.38), s('ST', 1, 0.62)], 'A back five behind a hard-working three.'),
     F('5-4-1', [...B5, s('LM', 0.45, 0.1), s('MF', 0.42, 0.38), s('MF', 0.42, 0.62), s('RM', 0.45, 0.9), s('ST', 1, 0.5)], 'Ten men behind the ball. Good luck getting through.'),
   ].forEach(f => { FORMATIONS[f.id] = f; });
-  const FORMATION_IDS = Object.keys(FORMATIONS);
+  // 3-2-5 and 2-3-5 were attacking-only shapes; roles now build those (inverted full-backs, inside forwards)
+  const FORMATION_IDS = Object.keys(FORMATIONS).filter(id => id !== '3-2-5' && id !== '2-3-5');
 
   // 5-a-side academy shapes
   const FORMATIONS5 = {};
@@ -159,41 +160,58 @@ const TAC = (() => {
   ];
   const PLAYER_OPTIONS = [
     { key: 'agg', label: 'Aggression', options: three('Low', 'Normal', 'High') },
-    { key: 'runs', label: 'Forward runs', options: three('Stay back', 'Normal', 'Get forward') },
+    { key: 'runs', label: 'Role focus', options: three('Defend', 'Balanced', 'Attack') },
     { key: 'shoot', label: 'Shooting', options: three('Less', 'Normal', 'More') },
   ];
   const defaultInstr = () => ({ agg: 0, runs: 0, shoot: 0 });
 
   // a fresh tactics object: lineup filled later by the caller
-  function make(oop, ip, team) {
-    const fo = formation(oop), map = autoMap(oop, ip), fi = formation(ip);
+  // One shape, one role per player. The role is what moves him: where he drifts when his side has the ball
+  // and where he holds when it doesn't. (The engine still reads ip/map/rIP; they always mirror the shape.)
+  function make(form, _unused, team) {
+    const fo = formation(form);
     return {
-      oop, ip, map,
+      oop: form, ip: form, map: fo.slots.map((_, i) => i),
       lineup: new Array(fo.slots.length).fill(null),
       rOOP: fo.slots.map(sl => defaultRole(sl.pos)),
-      rIP: fo.slots.map((_, i) => defaultRole(fi.slots[map[i]].pos)),
+      rIP: fo.slots.map(sl => defaultRole(sl.pos)),
       instr: fo.slots.map(defaultInstr),
       team: { ...defaultTeam(), ...(team || {}) },
       bench: [],
     };
   }
-  const ipPos = (t, i) => formation(t.ip).slots[t.map[i]].pos;
+  const ipPos = (t, i) => formation(t.oop).slots[i].pos;
   const oopPos = (t, i) => formation(t.oop).slots[i].pos;
-  // switch one of the two shapes, keeping each player's slot index and any role still valid there
-  function setFormation(t, which, id) {
-    if (which === 'oop') {
-      const old = formation(t.oop).slots, nu = formation(id).slots;
-      t.oop = id;
-      t.rOOP = nu.map((sl, i) => (ROLES[t.rOOP[i]] && ROLES[t.rOOP[i]].slots.includes(sl.pos) && old[i] && old[i].pos === sl.pos ? t.rOOP[i] : defaultRole(sl.pos)));
-    } else t.ip = id;
-    const prevIP = t.map.map((j, i) => ipPos(t, i));
-    t.map = autoMap(t.oop, t.ip);
-    t.rIP = t.rIP.map((r, i) => { const pos = ipPos(t, i); return ROLES[r] && ROLES[r].slots.includes(pos) && prevIP[i] === pos ? r : defaultRole(pos); });
+  const roleOf = (t, i) => t.rOOP[i];
+  // keep the engine's two-phase fields in step with the single shape (also migrates older saves)
+  function normalize(t) {
+    if (!t) return t;
+    if (!FORMATIONS[t.oop] || !FORMATION_IDS.includes(t.oop)) t.oop = FORMATION_IDS.includes(t.ip) ? t.ip : '4-3-3';
+    const fo = formation(t.oop);
+    t.ip = t.oop;
+    t.map = fo.slots.map((_, i) => i);
+    t.rOOP = fo.slots.map((sl, i) => (ROLES[t.rOOP && t.rOOP[i]] && ROLES[t.rOOP[i]].slots.includes(sl.pos) ? t.rOOP[i] : defaultRole(sl.pos)));
+    t.rIP = [...t.rOOP];
+    t.instr = fo.slots.map((_, i) => ({ ...defaultInstr(), ...((t.instr && t.instr[i]) || {}) }));
+    if (t.lineup.length !== fo.slots.length) t.lineup = fo.slots.map((_, i) => t.lineup[i] ?? null);
+    return t;
   }
-  // swap which IP slots two players move into
-  function swapIP(t, i, k) {
-    [t.map[i], t.map[k]] = [t.map[k], t.map[i]];
-    for (const x of [i, k]) { const pos = ipPos(t, x); if (!ROLES[t.rIP[x]] || !ROLES[t.rIP[x]].slots.includes(pos)) t.rIP[x] = defaultRole(pos); }
+  function setFormation(t, _which, id) {
+    const old = formation(t.oop).slots;
+    t.oop = id;
+    const nu = formation(id).slots;
+    t.rOOP = nu.map((sl, i) => (old[i] && old[i].pos === sl.pos && ROLES[t.rOOP[i]] && ROLES[t.rOOP[i]].slots.includes(sl.pos) ? t.rOOP[i] : defaultRole(sl.pos)));
+    normalize(t);
+  }
+  function setRole(t, i, id) { if (ROLES[id]) { t.rOOP[i] = id; t.rIP[i] = id; } }
+  // where a role takes a player, in team-block units (for the board): +u is upfield, +v toward the middle
+  function zones(roleId, focus = 0) {
+    const r = ROLES[roleId];
+    if (!r) return { att: { du: 0, dv: 0 }, def: { du: 0, dv: 0 } };
+    return {
+      att: { du: r.attack.du * (1 + 0.45 * focus) + 0.035 * focus, dv: r.attack.dv * (1 + 0.3 * focus) },
+      def: { du: r.defend.du + 0.03 * focus, dv: r.defend.dv },
+    };
   }
   function clone(t) {
     return { ...t, map: [...t.map], lineup: [...t.lineup], rOOP: [...t.rOOP], rIP: [...t.rIP], instr: t.instr.map(x => ({ ...x })), team: { ...t.team }, bench: [...(t.bench || [])] };
@@ -202,11 +220,14 @@ const TAC = (() => {
   // how comfortable a player is in a position, 0.35..1
   function fam(p, pos) {
     if (p.pos === pos) return 1;
-    if (p.alt && p.alt.includes(pos)) return 0.96;
-    if (p.pos === 'GK' || pos === 'GK') return 0.35;
-    const a = DATA.POS_UV[p.pos], b = DATA.POS_UV[pos];
-    return U.clamp(1 - Math.hypot(a[0] - b[0], (a[1] - b[1]) * 0.85) * 0.6, 0.55, 0.92);
+    let f;
+    if (p.alt && p.alt.includes(pos)) f = 0.96;
+    else if (p.pos === 'GK' || pos === 'GK') f = 0.35;
+    else { const a = DATA.POS_UV[p.pos], b = DATA.POS_UV[pos]; f = U.clamp(1 - Math.hypot(a[0] - b[0], (a[1] - b[1]) * 0.85) * 0.6, 0.55, 0.92); }
+    // retraining into a position: he gets more comfortable there week by week
+    if (p.trainPos === pos && p.retrain) f += (0.97 - f) * p.retrain;
+    return f;
   }
 
-  return { ROLES, LIST, rolesFor, defaultRole, FORMATIONS, FORMATION_IDS, FORMATIONS5, formation, autoMap, TEAM_OPTIONS, PLAYER_OPTIONS, defaultTeam, defaultInstr, make, ipPos, oopPos, setFormation, swapIP, clone, fam };
+  return { ROLES, LIST, rolesFor, defaultRole, FORMATIONS, FORMATION_IDS, FORMATIONS5, formation, autoMap, TEAM_OPTIONS, PLAYER_OPTIONS, defaultTeam, defaultInstr, make, ipPos, oopPos, roleOf, normalize, setFormation, setRole, zones, clone, fam };
 })();

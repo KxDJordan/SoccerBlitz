@@ -72,9 +72,9 @@
   // ── new game flow ──
   SCREENS.new = () => {
     const c = S.create;
-    const steps = { challenge: stepChallenge, nation: stepNation, team: stepTeam, manager: stepManager };
+    const steps = { challenge: stepChallenge, nation: stepNation, team: stepTeam, custom: stepCustom, manager: stepManager };
     const back = `<button class="icon-btn" data-a="newBack">${I.back}</button>`;
-    const titles = { challenge: ['Owner Challenge', 'Pick your mission'], nation: ['Choose a nation', 'Four leagues, two divisions each'], team: ['Choose your club', c.challenge ? Career.CHALLENGES[c.challenge].name : 'Every club has an identity'], manager: ['Your manager', 'Name and philosophy'] };
+    const titles = { challenge: ['Owner Challenge', 'Pick your mission'], nation: ['Choose a nation', 'Four leagues, two divisions each'], team: ['Choose your club', c.challenge ? Career.CHALLENGES[c.challenge].name : 'Every club has an identity'], custom: ['Create your club', 'Your name, your colours, your story'], manager: ['Your manager', 'Name and philosophy'] };
     const [t, s] = titles[c.step];
     return `<div class="screen">${UI.topbar(t, s, back)}<div class="scroll noTab">${steps[c.step]()}</div></div>`;
   };
@@ -103,28 +103,85 @@
     const teams = lg.teams.map(L.team).sort((a, b) => b.rep - a.rep);
     return `<div class="seg"><button class="${c.tier === 0 ? 'on' : ''}" data-a="pickTier" data-v="0">${esc(DATA.NATIONS[n].tiers[0])}</button><button class="${c.tier === 1 ? 'on' : ''}" data-a="pickTier" data-v="1">${esc(DATA.NATIONS[n].tiers[1])}</button></div>
       <p class="tiny muted">${c.tier === 0 ? 'Top flight: bigger budgets, bigger expectations. Bottom two go down.' : 'Second tier: smaller budgets, a hungry crowd. Top two go up.'}</p>
+      <button class="pick" data-a="createClub" style="border-style:dashed;border-color:var(--accent)"><div class="av" style="width:48px;height:48px;font-size:24px;background:var(--surface-3)">✏️</div><div class="grow"><div class="pt">Create your own club</div><div class="pd">Design a new club and enter it in the ${esc(lg.name)}. It replaces the division's lowest-ranked side.</div></div>${I.chev}</button>
       ${teams.map(teamPick).join('')}${c.team != null ? `<div style="position:sticky;bottom:10px"><button class="btn primary big block" data-a="toManager">Continue</button></div>` : ''}`;
   }
+  // ── club creator ──
+  const CC_DEFAULT = () => ({ name: '', abbr: '', city: '', stadium: '', c1: U.pick(['#B3122E', '#1F4FBF', '#0F4D2C', '#4B2A85', '#E5671B', '#13294B']), c2: '#F4F5F7', shorts: '#15181E', shape: 'shield', icon: 'lion', style: 'stripes', ident: 'underdog', strength: 'mid' });
+  const cap1 = x => x[0].toUpperCase() + x.slice(1);
+  const subLine = cc => `${(cc.abbr || 'ABC').toUpperCase()} · ${cc.stadium || `${cc.city || 'Home'} Park`}`;
+  function ccPreview(cc) {
+    const fake = { id: 9999, name: cc.name || 'Your Club', crest: { shape: cc.shape, icon: cc.icon, c1: cc.c1, c2: cc.c2 }, kit: { style: cc.style, c1: cc.c1, c2: cc.c2, c3: cc.shorts }, trophies: [] };
+    return `<div class="hero" style="--team-1:${cc.c1};--team-2:${cc.c2}"><div class="flex" style="gap:14px">${Art.crest(fake, 84)}<div class="grow"><div class="nm" id="cc-nm">${esc(cc.name || 'Your Club')}</div><div class="sub" id="cc-sub">${esc(subLine(cc))}</div></div>${Art.kit(fake.kit, 64, 9)}</div></div>`;
+  }
+  const chips = (field, list, cur) => `<div class="chips" style="flex-wrap:wrap">${list.map(x => `<button class="chip${cur === x ? ' on' : ''}" data-a="cc" data-v="${field}:${x}">${cap1(x)}</button>`).join('')}</div>`;
+  const swatches = (field, cur) => `<div class="flex wrap" style="gap:6px">${DATA.PALETTE.map(col => `<button data-a="cc" data-v="${field}:${col}" aria-label="${col}" style="width:32px;height:32px;border-radius:10px;background:${col};box-shadow:${cur === col ? '0 0 0 3px var(--bg),0 0 0 5px var(--accent-2)' : 'inset 0 0 0 1px rgba(255,255,255,.2)'}"></button>`).join('')}</div>`;
+  const STR = { minnow: ['Minnow', 'A tiny club with big dreams and no money'], mid: ['Established', 'A solid squad on a modest budget'], contender: ['Contender', 'Ready to challenge from day one'] };
+  function stepCustom() {
+    const cc = S.create.custom, lg = L.league(S.create.nation * 2 + S.create.tier);
+    const field = (f, label, ph, max) => `<div class="kicker mt8 mb8">${label}</div><input class="txt" maxlength="${max}" placeholder="${ph}" value="${esc(cc[f])}" data-in="ccText" data-f="${f}">`;
+    return `${ccPreview(cc)}
+      ${field('name', 'Club name', 'e.g. Northport Athletic', 26)}
+      <div class="grid2"><div>${field('abbr', 'Short name', 'NPA', 3)}</div><div>${field('city', 'Home town', 'Northport', 18)}</div></div>
+      ${field('stadium', 'Stadium', 'e.g. The Lighthouse', 26)}
+      <div class="kicker mt12 mb8">Primary colour</div>${swatches('c1', cc.c1)}
+      <div class="kicker mt12 mb8">Secondary colour</div>${swatches('c2', cc.c2)}
+      <div class="kicker mt12 mb8">Shorts</div>${swatches('shorts', cc.shorts)}
+      <div class="kicker mt12 mb8">Badge shape</div>${chips('shape', DATA.CREST_SHAPES, cc.shape)}
+      <div class="kicker mt8 mb8">Badge emblem</div>${chips('icon', DATA.CREST_ICONS, cc.icon)}
+      <div class="kicker mt8 mb8">Shirt pattern</div>${chips('style', DATA.KIT_STYLES, cc.style)}
+      <div class="kicker mt12 mb8">Club identity</div><div class="idgrid">${Object.entries(DATA.CLUB_IDS).map(([id, ci]) => `<button class="idcard${cc.ident === id ? ' on' : ''}" data-a="cc" data-v="ident:${id}"><div class="ic">${ci.icon}</div><b>${esc(ci.name)}</b><p>${esc(ci.desc)}</p></button>`).join('')}</div>
+      <div class="kicker mt12 mb8">Starting strength in the ${esc(lg.name)}</div>${Object.entries(STR).map(([id, [t, d]]) => `<button class="pick${cc.strength === id ? ' on' : ''}" data-a="cc" data-v="strength:${id}"><div class="grow"><div class="pt">${t}</div><div class="pd">${d}</div></div></button>`).join('')}
+      <button class="btn primary big block mt12" data-a="customDone">Found the club</button>`;
+  }
+  A.createClub = () => { const c = S.create; if (!c.custom) c.custom = CC_DEFAULT(); c.step = 'custom'; UI.render(); const sc = document.querySelector('.scroll'); if (sc) sc.scrollTop = 0; };
+  A.cc = v => { const i = v.indexOf(':'); S.create.custom[v.slice(0, i)] = v.slice(i + 1); UI.render(); };
+  // typing updates the preview in place (a re-render would steal the keyboard)
+  A.ccText = (v, el) => {
+    const cc = S.create.custom, f = el.dataset.f;
+    cc[f] = v;
+    if (f === 'name' && !cc.abbrTyped) { cc.abbr = v.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase(); const a = document.querySelector('[data-f="abbr"]'); if (a) a.value = cc.abbr; }
+    if (f === 'abbr') cc.abbrTyped = true;
+    const nm = document.getElementById('cc-nm'), sub = document.getElementById('cc-sub');
+    if (nm) nm.textContent = cc.name || 'Your Club';
+    if (sub) sub.textContent = subLine(cc);
+  };
+  A.customDone = () => {
+    const c = S.create, cc = c.custom;
+    if ((cc.name || '').trim().length < 3) { UI.toast('Give your club a name (at least 3 letters).'); Sfx.play('error'); return; }
+    if (U.cdist(cc.c1, cc.c2) < 60) { UI.toast('Pick two colours that stand apart.'); Sfx.play('error'); return; }
+    const lgId = c.nation * 2 + c.tier;
+    if (c.customTid != null && L.team(c.customTid).leagueId !== lgId) { L.restoreTeam(c.customTid); c.customTid = null; }
+    if (c.customTid == null) c.customTid = L.league(lgId).teams.map(L.team).sort((a, b) => a.rep - b.rep)[0].id;
+    const ab = (cc.abbr || '').toUpperCase().replace(/[^A-Z]/g, '');
+    if (ab.length !== 3) { UI.toast('The short name needs exactly three letters.'); Sfx.play('error'); return; }
+    const clash = G.teams.find(t => t.id !== c.customTid && t.abbr === ab);
+    if (clash) { UI.toast(`${esc(ab)} is already used by ${esc(clash.name)}. Pick another short name.`, '', 3200); Sfx.play('error'); return; }
+    L.customizeTeam(c.customTid, cc);
+    c.team = c.customTid;
+    c.step = 'manager';
+    UI.render();
+  };
   function stepManager() {
     const c = S.create, t = L.team(c.team), forced = c.challenge === 'blitz';
     return `<div class="hero" style="${UI.teamVars(t)}"><div class="hcrest">${UI.crest(t, 150)}</div><div class="kicker" style="color:rgba(255,255,255,.75)">Your new club</div><div class="nm">${esc(t.name)}</div><div class="sub">${esc(L.league(t.leagueId).name)} · ${DATA.CLUB_IDS[t.ident].icon} ${esc(DATA.CLUB_IDS[t.ident].name)}</div></div>
       <div class="kicker mb8">Manager name</div><input class="txt" id="mgr-name" maxlength="24" placeholder="e.g. Alex Morgan" value="${esc(c.name)}" data-in="mgrName">
       <div class="kicker mt12 mb8">Your philosophy ${forced ? '<span class="tag t-warn">Fixed by the challenge</span>' : ''}</div>
       <p class="tiny muted" style="margin-top:-4px">Your identity sets your default shapes and instructions, gives a small bonus, and follows you to every club. It evolves with the way you actually play.</p>
-      <div class="idgrid">${Object.entries(DATA.COACH_IDS).map(([id, ci]) => `<button class="idcard${(forced ? 'blitz' : c.ident) === id ? ' on' : ''}" data-a="${forced ? 'noop' : 'pickIdent'}" data-v="${id}"><div class="ic">${ci.icon}</div><b>${esc(ci.name)}</b><p>${esc(ci.desc)}</p><p class="dim">${ci.oop} out · ${ci.ip} in</p></button>`).join('')}</div>
+      <div class="idgrid">${Object.entries(DATA.COACH_IDS).map(([id, ci]) => `<button class="idcard${(forced ? 'blitz' : c.ident) === id ? ' on' : ''}" data-a="${forced ? 'noop' : 'pickIdent'}" data-v="${id}"><div class="ic">${ci.icon}</div><b>${esc(ci.name)}</b><p>${esc(ci.desc)}</p><p class="dim">${ci.oop} · ${(ci.roles || []).slice(0, 3).map(r => TAC.ROLES[r].short).join(' · ') || 'balanced'}</p></button>`).join('')}</div>
       <button class="btn primary big block mt12" data-a="startCareer">Take charge</button>`;
   }
   A.newBack = () => {
     const c = S.create;
-    const order = c.mode === 'challenge' ? ['challenge', 'team', 'manager'] : ['nation', 'team', 'manager'];
+    const order = c.mode === 'challenge' ? ['challenge', 'team', 'manager'] : c.customTid != null && c.team === c.customTid ? ['nation', 'team', 'custom', 'manager'] : ['nation', 'team', 'manager'];
     const i = order.indexOf(c.step);
     if (i <= 0) { G = null; UI.go('menu'); return; }
     c.step = order[i - 1]; UI.render();
   };
   A.pickChallenge = v => { S.create.challenge = v; S.create.team = null; S.create.step = 'team'; UI.render(); };
-  A.pickNation = v => { S.create.nation = +v; S.create.tier = 0; S.create.step = 'team'; UI.render(); };
-  A.pickTier = v => { S.create.tier = +v; S.create.team = null; UI.render(); };
-  A.pickTeam = v => { S.create.team = +v; UI.render(); };
+  A.pickNation = v => { if (S.create.customTid != null) { L.restoreTeam(S.create.customTid); S.create.customTid = null; } S.create.nation = +v; S.create.tier = 0; S.create.step = 'team'; UI.render(); };
+  A.pickTier = v => { const c = S.create; if (c.customTid != null) { L.restoreTeam(c.customTid); c.customTid = null; } c.tier = +v; c.team = null; UI.render(); };
+  A.pickTeam = v => { const c = S.create; if (c.customTid != null && +v !== c.customTid) { L.restoreTeam(c.customTid); c.customTid = null; } c.team = +v; UI.render(); };
   A.toManager = () => { S.create.step = 'manager'; UI.render(); };
   A.pickIdent = v => { S.create.ident = v; S.create.name = (document.getElementById('mgr-name') || {}).value || S.create.name; UI.render(); };
   A.mgrName = v => { S.create.name = v; };
@@ -150,7 +207,14 @@
   A.settings = () => {
     const has = !!(G && G.ready);
     const info = Store.info();
+    const cur = UI.pref('theme', 'midnight'), club = UI.pref('clubAccent', 'on') !== 'off', pitch = UI.pref('pitch', 'stripes');
+    const swatch = (id, th) => `<button class="theme-sw${cur === id ? ' on' : ''}" data-a="setTheme" data-v="${id}"><div class="pv" style="background:${th.bg}"><i style="left:8%;top:14%;width:56%;height:30%;background:${th.surface};box-shadow:0 0 0 1px rgba(127,127,127,.18)"></i><i style="left:8%;top:54%;width:84%;height:28%;background:${th.s3}"></i><i style="right:8%;top:14%;width:22%;height:30%;background:${th.acc}"></i><i style="left:12%;top:62%;width:30%;height:12%;background:${th.acc2}"></i></div><b>${esc(th.name)}</b></button>`;
+    const PS = Render.PITCH_STYLES;
     UI.sheet(`<h2>Settings</h2>
+      <div class="kicker mt8 mb8">Theme</div><div class="themes">${Object.entries(UI.THEMES).map(([id, th]) => swatch(id, th)).join('')}</div>
+      <div class="row"><div class="grow"><div class="nm">Club colours as accents</div><div class="meta">Buttons and highlights take your club's colours instead of the theme's</div></div><button class="btn sm ${club ? 'primary' : ''}" data-a="toggleClubAccent">${club ? 'On' : 'Off'}</button></div>
+      <div class="kicker mt12 mb8">Pitch style</div><div class="chips" style="flex-wrap:wrap">${Object.entries(PS).map(([id, p]) => `<button class="chip${pitch === id ? ' on' : ''}" data-a="setPitch" data-v="${id}"><span style="display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:-2px;margin-right:5px;background:${id === 'checker' ? `conic-gradient(${p.g1} 0 25%, ${p.g2} 0 50%, ${p.g1} 0 75%, ${p.g2} 0)` : id === 'diagonal' ? `repeating-linear-gradient(45deg, ${p.g1} 0 4px, ${p.g2} 4px 8px)` : id === 'neon' ? `${p.g1};box-shadow:inset 0 0 0 1.5px ${p.line}` : `repeating-linear-gradient(90deg, ${p.g1} 0 4px, ${p.g2} 4px 8px)`}"></span>${esc(p.name)}</button>`).join('')}</div>
+      <div class="kicker mt12 mb8">Game</div>
       <div class="row"><div class="grow"><div class="nm">Sound</div><div class="meta">Synthesised crowd, hits and whistles</div></div><button class="btn sm ${Sfx.on ? 'primary' : ''}" data-a="toggleSfx">${Sfx.on ? 'On' : 'Off'}</button></div>
       ${has ? `<div class="row"><div class="grow"><div class="nm">Auto substitutions</div><div class="meta">Your assistant makes tired and injured changes in live matches</div></div><button class="btn sm ${G.settings.autoSub ? 'primary' : ''}" data-a="toggleAutoSub">${G.settings.autoSub ? 'On' : 'Off'}</button></div>
       <div class="row"><div class="grow"><div class="nm">Match camera</div><div class="meta">Follow the ball, or the whole pitch</div></div><button class="btn sm" data-a="toggleCam">${G.settings.cam === 'follow' ? 'Follow' : 'Full pitch'}</button></div>
@@ -160,6 +224,9 @@
       <button class="btn block mt8" data-a="toMenu">Main menu</button>` : `<div class="kicker mt12 mb8">Save</div><button class="btn block" data-a="importSave">Import a career</button>`}
       <div class="build">Build ${BUILD}</div>`, { refresh: () => A.settings() });
   };
+  A.setTheme = v => { UI.setPref('theme', v); UI.applyTheme(); UI.render(); UI.refreshSheet(); };
+  A.toggleClubAccent = () => { UI.setPref('clubAccent', UI.pref('clubAccent', 'on') === 'off' ? 'on' : 'off'); UI.applyTheme(); UI.render(); UI.refreshSheet(); };
+  A.setPitch = v => { UI.setPref('pitch', v); UI.refreshSheet(); if (S.screen === 'menu') UI.render(); UI.toast('Pitch style set: new matches use it', '', 1600); };
   A.toggleSfx = () => { Sfx.toggle(); UI.refreshSheet(); };
   A.toggleAutoSub = () => { G.settings.autoSub = !G.settings.autoSub; L.save(); UI.refreshSheet(); };
   A.toggleCam = () => { G.settings.cam = G.settings.cam === 'follow' ? 'full' : 'follow'; L.save(); UI.refreshSheet(); };

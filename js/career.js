@@ -18,7 +18,7 @@ const Career = (() => {
     { id: 'free_kick', icon: '🎯', name: 'Over the Wall', desc: 'Score a direct free kick.' },
     { id: 'blitz', icon: '🏈', name: 'Blitz Mode', desc: 'Your team lands 15 big hits in one match.' },
     { id: 'giant_killer', icon: '🗡️', name: 'Giant Killer', desc: 'Beat a club with 20+ more reputation.' },
-    { id: 'tactician', icon: '♟️', name: 'Shape Shifter', desc: 'Win using different in- and out-of-possession formations.' },
+    { id: 'tactician', icon: '♟️', name: 'Shape Shifter', desc: 'Win with two or more inverted or false roles in your side (IFB, IWB, FLB, IW, F9).' },
     { id: 'unbeaten10', icon: '🧱', name: 'Unbreakable', desc: 'Go ten matches unbeaten.' },
     { id: 'promoted', icon: '📈', name: 'Going Up!', desc: 'Win promotion to the top flight.' },
     { id: 'champion', icon: '🏆', name: 'Champions', desc: 'Win a league title.' },
@@ -86,7 +86,7 @@ const Career = (() => {
     G.stats.goals += us;
     const opp = L.team(side === 0 ? f.a : f.h);
     if (won && opp.rep >= u().rep + 20) unlock('giant_killer');
-    if (won) { const tac = u().tac; if (tac.ip !== tac.oop) unlock('tactician'); }
+    if (won) { const inv = u().tac.rOOP.filter(r => ['ifb', 'iwb', 'flb', 'iw', 'f9'].includes(r)).length; if (inv >= 2) unlock('tactician'); }
     const ev = res.events || [];
     const goalsBy = {};
     for (const e of ev) if (e.type === 'goal' && e.team === side && e.pid) goalsBy[e.pid] = (goalsBy[e.pid] || 0) + 1;
@@ -103,7 +103,7 @@ const Career = (() => {
     const ti = u().tac.team;
     let best = null, bd = Infinity;
     for (const [id, c] of Object.entries(DATA.COACH_IDS)) {
-      const d = Object.keys(c.team).reduce((s, k) => s + Math.abs((ti[k] || 0) - c.team[k]), 0) + (u().tac.ip === c.ip ? -0.5 : 0) + (u().tac.oop === c.oop ? -0.5 : 0);
+      const d = Object.keys(c.team).reduce((s, k) => s + Math.abs((ti[k] || 0) - c.team[k]), 0) + (u().tac.oop === c.oop ? -0.5 : 0) - 0.4 * u().tac.rOOP.filter(r => (c.roles || []).includes(r)).length;
       if (d < bd) { bd = d; best = id; }
     }
     G.mgr.usage = G.mgr.usage || {};
@@ -319,7 +319,7 @@ const Career = (() => {
       status() { const t = u(); const done = t.trophies.some(x => DATA.NATIONS.some(n => n.cup === x.name)); return { done, failed: G.season > 3 && !done, text: `Season ${G.season}/3` }; } },
     blitz: { name: 'Blitz Chaos', icon: '💥', desc: 'The owner wants entertainment: Blitz Ball tactics only, and 70+ league goals in a season.', seasons: 3,
       teams: () => G.teams.filter(t => t.tier === 0 && t.rep >= 40 && t.rep <= 80),
-      setup() { G.mgr.ident = 'blitz'; const id = DATA.COACH_IDS.blitz; u().tac = TAC.make(id.oop, id.ip, id.team); L.autoLineup(u()); u().ident = 'entertainers'; },
+      setup() { G.mgr.ident = 'blitz'; L.applyPhilosophy(u(), 'blitz'); u().ident = 'entertainers'; },
       status() { const r = (G.table[u().leagueId] || {})[G.userTeamId] || { gf: 0 }; const done = r.gf >= 70; return { done, failed: G.season > 3 && !done, text: `${r.gf}/70 league goals this season` }; } },
     fortress: { name: 'Fortress', icon: '🏰', desc: 'Go an entire league season unbeaten at home within three seasons.', seasons: 3,
       teams: () => G.teams.filter(t => t.rep >= 35 && t.rep <= 70),

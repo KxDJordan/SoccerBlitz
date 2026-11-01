@@ -89,7 +89,7 @@
   A.coachSheet = v => {
     const c = G.coaches[+v], id = DATA.COACH_IDS[c.ident];
     UI.sheet(`<div class="flex mb12">${Art.coachFace(c, 64)}<div class="grow"><h2>${esc(c.fn)} ${esc(c.ln)}</h2><div class="small muted">${Art.flag(c.nat, 14)} ${esc(c.nat)} · ${c.age} · rating ${c.rating} · rep ${c.rep}</div></div></div>
-      <div class="card"><div class="bold">${id.icon} ${esc(id.name)}</div><div class="small muted">${esc(id.desc)}</div><div class="tiny dim mt4">Defends in ${id.oop}, attacks in ${id.ip}</div></div>
+      <div class="card"><div class="bold">${id.icon} ${esc(id.name)}</div><div class="small muted">${esc(id.desc)}</div><div class="tiny dim mt4">Plays a ${id.oop} · favourite roles: ${(id.roles || []).slice(0, 4).map(r => TAC.ROLES[r].short).join(' · ') || 'balanced roles'}</div></div>
       <div class="kv"><div><b>${c.w}</b><span>Won</span></div><div><b>${c.d}</b><span>Drawn</span></div><div><b>${c.l}</b><span>Lost</span></div></div>
       <div class="kicker mt12 mb8">Career</div>${c.tid >= 0 ? `<div class="small">Now: <b>${esc(T(c.tid).name)}</b> since season ${c.since}</div>` : '<div class="small muted">Out of work</div>'}${(c.hist || []).map(h => `<div class="small muted">S${h.s0}–S${h.s1}: ${esc(T(h.tid).name)}${h.sacked ? ' (sacked)' : ''}</div>`).join('')}<div class="small mt4">🏆 ${c.trophies} trophies</div>`);
   };
@@ -98,7 +98,7 @@
     const r = (G.table[t.leagueId] || {})[t.id];
     UI.sheet(`<div class="hero" style="${UI.teamVars(t)}"><div class="hcrest">${UI.crest(t, 160)}</div><div class="kicker" style="color:rgba(255,255,255,.75)">${esc(L.league(t.leagueId).name)} · Founded ${t.founded}</div><div class="nm">${esc(t.name)}</div><div class="sub">${DATA.CLUB_IDS[t.ident].icon} ${esc(DATA.CLUB_IDS[t.ident].name)} · ${esc(t.stadium.name)}</div>
       <div class="hero-stats"><div><b>${L.position(t.id) ? U.ord(L.position(t.id)) : '–'}</b><span>Position</span></div><div><b>${r ? r.pts : 0}</b><span>Points</span></div><div><b>${t.rep}</b><span>Rep</span></div><div><b>${Math.round(L.teamLevel(t))}</b><span>Squad</span></div></div></div>
-      ${c && t.id !== G.userTeamId ? `<div class="row tap" data-a="coachSheet" data-v="${c.id}">${Art.coachFace(c, 38)}<div class="grow"><div class="nm">${esc(c.fn)} ${esc(c.ln)}</div><div class="meta">${DATA.COACH_IDS[c.ident].icon} ${esc(DATA.COACH_IDS[c.ident].name)} · plays ${t.tac ? `${t.tac.oop} / ${t.tac.ip}` : ''}</div></div>${I.chev}</div>` : ''}
+      ${c && t.id !== G.userTeamId ? `<div class="row tap" data-a="coachSheet" data-v="${c.id}">${Art.coachFace(c, 38)}<div class="grow"><div class="nm">${esc(c.fn)} ${esc(c.ln)}</div><div class="meta">${DATA.COACH_IDS[c.ident].icon} ${esc(DATA.COACH_IDS[c.ident].name)} · plays ${t.tac ? t.tac.oop : ''}</div></div>${I.chev}</div>` : ''}
       ${t.trophies.length ? `<div class="small mt8">🏆 ${t.trophies.slice(-6).map(x => `${esc(x.name)} (S${x.s})`).join(' · ')}</div>` : ''}
       <div class="kicker mt12 mb8">Squad</div><div class="list">${sq.map(p => UI.playerRow(p)).join('')}</div>`, { vars: UI.teamVars(t) });
   };
@@ -214,7 +214,7 @@
     return `<div class="card"><h3>Club DNA</h3><div class="flex"><div style="font-size:34px">${ci.icon}</div><div class="grow"><div class="bold">${esc(ci.name)}</div><div class="small muted">${esc(ci.desc)}</div></div></div><p class="tiny dim">Clubs grow into new identities: give academy debuts, score bags of goals, or turn a profit and the fans will start calling you something else.</p></div>
       <div class="card"><h3>Your philosophy</h3><div class="flex"><div style="font-size:34px">${mi.icon}</div><div class="grow"><div class="bold">${esc(mi.name)}</div><div class="small muted">${esc(mi.desc)}</div></div></div>
       <div class="kicker mt12 mb8">How you've actually played this season</div>${Object.entries(use).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<div class="attr" style="grid-template-columns:130px 1fr 34px"><span class="small">${DATA.COACH_IDS[k].icon} ${esc(DATA.COACH_IDS[k].name)}</span><div class="bar"><i style="width:${(n / total) * 100}%"></i></div><b class="small">${n}</b></div>`).join('') || '<div class="tiny muted">Play some matches.</div>'}<p class="tiny dim">At season's end your label follows the style you used most — and it travels with you to any club you take over.</p></div>
-      <div class="card"><h3>All philosophies</h3>${Object.values(DATA.COACH_IDS).map(c => `<div class="row"><div style="font-size:22px">${c.icon}</div><div class="grow"><div class="nm">${esc(c.name)}</div><div class="meta">${esc(c.desc)} <span class="dim">(${c.oop} / ${c.ip})</span></div></div></div>`).join('')}</div>`;
+      <div class="card"><h3>All philosophies</h3>${Object.values(DATA.COACH_IDS).map(c => `<div class="row"><div style="font-size:22px">${c.icon}</div><div class="grow"><div class="nm">${esc(c.name)}</div><div class="meta">${esc(c.desc)} <span class="dim">(${c.oop} · ${(c.roles || []).slice(0, 3).map(r => TAC.ROLES[r].short).join(', ') || 'any roles'})</span></div></div></div>`).join('')}</div>`;
   }
   function trophies() {
     const u = L.user();
